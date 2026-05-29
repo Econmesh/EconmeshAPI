@@ -1,0 +1,139 @@
+[build-system]
+requires = ["poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
+name = "econmesh-api"
+version = "0.1.0"
+description = "Econmesh enterprise backend API — modular monolith, async, production-ready."
+authors = [{ name = "Econmesh Engineering" }]
+readme = "README.md"
+requires-python = ">=3.14,<4.0"
+license = { text = "Proprietary" }
+keywords = ["econmesh", "fastapi", "esg", "circular-economy", "blockchain"]
+classifiers = [
+    "Framework :: FastAPI",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "fastapi (>=0.115.0,<1.0.0)",
+    "uvicorn[standard] (>=0.32.0,<1.0.0)",
+    "gunicorn (>=23.0.0,<24.0.0)",
+    "pydantic (>=2.9.0,<3.0.0)",
+    "pydantic-settings (>=2.6.0,<3.0.0)",
+    "pymongo (>=4.15.0,<5.0.0)",
+    "redis[hiredis] (>=5.2.0,<7.0.0)",
+    "firebase-admin (>=6.5.0,<8.0.0)",
+    "structlog (>=24.4.0,<26.0.0)",
+    "python-json-logger (>=2.0.7,<4.0.0)",
+    "bcrypt (>=4.2.0,<5.0.0)",
+    "passlib[bcrypt] (>=1.7.4,<2.0.0)",
+    "httpx (>=0.27.0,<1.0.0)",
+    "tenacity (>=9.0.0,<10.0.0)",
+    "slowapi (>=0.1.9,<1.0.0)",
+    "python-multipart (>=0.0.12,<1.0.0)",
+    "aiofiles (>=24.1.0,<25.0.0)",
+    "orjson (>=3.10.0,<4.0.0)",
+]
+
+[project.urls]
+Homepage = "https://econmesh.com"
+Repository = "https://github.com/econmesh/econmesh-api"
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.3.0,<9.0.0"
+pytest-asyncio = ">=0.24.0,<1.0.0"
+pytest-cov = ">=5.0.0,<7.0.0"
+ruff = ">=0.7.0,<1.0.0"
+pyright = ">=1.1.380,<2.0.0"
+pre-commit = ">=4.0.0,<5.0.0"
+types-redis = ">=4.6.0,<5.0.0"
+asgi-lifespan = ">=2.1.0,<3.0.0"
+
+# ---------------------------------------------------------------------------
+# Ruff (lint + format) — replaces black, isort, flake8, pyupgrade.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src"]
+extend-exclude = [".venv", "build", "dist", "__pycache__"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "S",    # flake8-bandit (security)
+    "RET",  # flake8-return
+    "SIM",  # flake8-simplify
+    "ASYNC",
+    "N",    # pep8-naming
+]
+ignore = [
+    "B008",  # function call in default arg — required by FastAPI Depends()
+    "S101",  # use of assert — fine in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/tests/**/*.py" = ["S101", "S105", "S106", "S311"]
+"src/scripts/**/*.py" = ["S311"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# Pyright (static type checking)
+# ---------------------------------------------------------------------------
+[tool.pyright]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+include = ["src"]
+exclude = ["**/__pycache__", ".venv", "build", "dist"]
+reportMissingImports = "error"
+reportUnusedImport = "warning"
+reportMissingTypeStubs = false
+useLibraryCodeForTypes = true
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["src/tests"]
+pythonpath = ["."]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+]
+markers = [
+    "integration: marks tests requiring external services (mongo, redis)",
+    "unit: marks unit tests (no external services)",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
+omit = ["src/tests/*", "src/scripts/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

@@ -1,0 +1,50 @@
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+.venv
+venv
+env
+.git
+.gitignore
+.github
+.vscode
+.idea
+.pytest_cache
+.coverage
+coverage.xml
+htmlcov
+.mypy_cache
+.pyright
+.ruff_cache
+.tox
+.nox
+
+# Tests & docs — not needed in runtime image
+src/tests
+**/*.md
+docs/
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+firebase-adminsdk*.json
+serviceAccountKey*.json
+
+# Build artifacts
+build/
+dist/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Docker meta
+Dockerfile
+docker-compose*.yml
+.dockerignore
