@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from src.modules.auth.schema import LoginRequest, LoginResponse, MeResponse
+from src.modules.auth.schema import (
+    AdminRegisterRequest,
+    LoginRequest,
+    LoginResponse,
+    MeResponse,
+    RegisterRequest,
+    RegisterResponse,
+)
 from src.modules.auth.service import AuthService
 from src.shared.dependencies.auth import CurrentUser
 from src.shared.schemas.responses import MessageResponse
@@ -13,6 +20,18 @@ class AuthController:
 
     def __init__(self, service: AuthService) -> None:
         self._service = service
+
+    async def register(self, payload: RegisterRequest) -> RegisterResponse:
+        return await self._service.register(payload)
+
+    async def register_by_admin(self, payload: AdminRegisterRequest) -> RegisterResponse:
+        return await self._service.register_by_admin(payload)
+
+    async def verify_account(self, token: str) -> MessageResponse:
+        return await self._service.verify_account(token)
+
+    async def resend_verification(self, email: str) -> MessageResponse:
+        return await self._service.resend_verification(email)
 
     async def login(self, payload: LoginRequest) -> LoginResponse:
         return await self._service.login_with_id_token(payload.id_token)

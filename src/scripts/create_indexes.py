@@ -11,7 +11,7 @@ import asyncio
 
 from src.core.database import mongo
 from src.core.logging import get_logger, setup_logging
-from src.modules.auth.repository import AuthRepository
+from src.modules.auth.repository import AuthRepository, EmailVerificationRepository
 
 logger = get_logger(__name__)
 
@@ -22,6 +22,7 @@ async def _main() -> None:
     try:
         logger.info("creating_indexes")
         await AuthRepository(mongo.db).ensure_indexes()
+        await EmailVerificationRepository(mongo.db).ensure_indexes()
         # TODO: invoke ensure_indexes() on every repository when its body is implemented.
         logger.info("indexes_done")
     finally:

@@ -13,11 +13,19 @@ _DEFAULT_HEADERS: dict[str, str] = {
     "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-site",
-    # Strict CSP — adjust if you serve HTML directly from the API.
-    "Content-Security-Policy": (
-        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
-    ),
 }
+
+_STRICT_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+_DOCS_CSP = (
+    "default-src 'self'; "
+    "base-uri 'self'; "
+    "frame-ancestors 'none'; "
+    "img-src 'self' data: https:; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "font-src 'self' data: https://cdn.jsdelivr.net; "
+    "connect-src 'self'"
+)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -37,6 +45,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         for header, value in _DEFAULT_HEADERS.items():
             response.headers.setdefault(header, value)
+        response.headers.setdefault(
+            "Content-Security-Policy", self._csp_for_path(request.url.path)
+        )
 
         if self._hsts and request.url.scheme == "https":
             response.headers.setdefault(
@@ -44,6 +55,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "max-age=31536000; includeSubDomains",
             )
         return response
+
+    @staticmethod
+    def _csp_for_path(path: str) -> str:
+        if path.startswith("/docs") or path.startswith("/redoc"):
+            return _DOCS_CSP
+        return _STRICT_CSP
 
 
 __all__ = ["SecurityHeadersMiddleware"]

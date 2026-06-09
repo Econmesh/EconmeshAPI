@@ -15,7 +15,7 @@ from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials
 
 from src.core.config import Settings, get_settings
-from src.core.exceptions import AuthError
+from src.core.exceptions import AuthError, ConflictError, ExternalServiceError, NotFoundError
 from src.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -79,7 +79,11 @@ class FirebaseAdmin:
 
     # ------------------------------------------------------------------ auth
     async def verify_id_token(
-        self, token: str, *, check_revoked: bool = True
+        self,
+        token: str,
+        *,
+        check_revoked: bool = True,
+        clock_skew_seconds: int | None = None,
     ) -> dict[str, Any]:
         """Verify a Firebase ID token. Returns the decoded claims dict.
 
@@ -90,17 +94,29 @@ class FirebaseAdmin:
         if not token:
             raise AuthError("Missing ID token.")
 
+        skew = (
+            self._settings.FIREBASE_CLOCK_SKEW_SECONDS
+            if clock_skew_seconds is None
+            else clock_skew_seconds
+        )
+
         try:
             decoded: dict[str, Any] = await asyncio.to_thread(
                 firebase_auth.verify_id_token,
                 token,
                 check_revoked=check_revoked,
+                clock_skew_seconds=skew,
             )
         except firebase_auth.ExpiredIdTokenError as exc:
             raise AuthError("ID token expired.", code="token_expired") from exc
         except firebase_auth.RevokedIdTokenError as exc:
             raise AuthError("ID token revoked.", code="token_revoked") from exc
         except firebase_auth.InvalidIdTokenError as exc:
+            logger.warning(
+                "firebase_token_invalid",
+                error=str(exc),
+                cause=str(exc.cause) if exc.cause else None,
+            )
             raise AuthError("ID token is invalid.", code="token_invalid") from exc
         except Exception as exc:  # noqa: BLE001
             logger.exception("firebase_verify_unexpected_failure")
@@ -111,6 +127,63 @@ class FirebaseAdmin:
     async def revoke_refresh_tokens(self, uid: str) -> None:
         """Revoke all refresh tokens for a user (logout-everywhere)."""
         await asyncio.to_thread(firebase_auth.revoke_refresh_tokens, uid)
+
+    # ------------------------------------------------------- user management
+    async def create_user(
+        self,
+        *,
+        email: str,
+        password: str,
+        display_name: str | None = None,
+        email_verified: bool = False,
+        disabled: bool = False,
+    ) -> firebase_auth.UserRecord:
+        """Create a Firebase identity (email/password). Raises on conflicts."""
+        try:
+            return await asyncio.to_thread(
+                firebase_auth.create_user,
+                email=email,
+                password=password,
+                display_name=display_name,
+                email_verified=email_verified,
+                disabled=disabled,
+            )
+        except firebase_auth.EmailAlreadyExistsError as exc:
+            raise ConflictError(
+                "An account with this email already exists.",
+                code="email_already_exists",
+            ) from exc
+        except ValueError as exc:
+            # Raised by the SDK for malformed inputs (weak password, bad email, …).
+            raise AuthError(str(exc), code="invalid_credentials") from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("firebase_create_user_failed")
+            raise ExternalServiceError("Unable to create the account.") from exc
+
+    async def set_custom_user_claims(self, uid: str, claims: dict[str, Any]) -> None:
+        """Attach custom claims (e.g. ``role``) to a Firebase user."""
+        await asyncio.to_thread(firebase_auth.set_custom_user_claims, uid, claims)
+
+    async def update_user(self, uid: str, **fields: Any) -> firebase_auth.UserRecord:
+        """Patch a Firebase user (e.g. ``email_verified=True``, ``disabled=...``)."""
+        try:
+            return await asyncio.to_thread(firebase_auth.update_user, uid, **fields)
+        except firebase_auth.UserNotFoundError as exc:
+            raise NotFoundError("Firebase user not found.", code="user_not_found") from exc
+
+    async def get_user_by_email(self, email: str) -> firebase_auth.UserRecord | None:
+        """Return the Firebase user for an email, or ``None`` if absent."""
+        try:
+            return await asyncio.to_thread(firebase_auth.get_user_by_email, email)
+        except firebase_auth.UserNotFoundError:
+            return None
+
+    async def delete_user(self, uid: str) -> None:
+        """Delete a Firebase identity (used to roll back a failed registration)."""
+        try:
+            await asyncio.to_thread(firebase_auth.delete_user, uid)
+        except firebase_auth.UserNotFoundError:
+            return
 
 
 firebase = FirebaseAdmin()

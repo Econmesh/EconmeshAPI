@@ -63,6 +63,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await redis_manager.connect()
     firebase.init()
 
+    log.info("mail_configured", enabled=settings.MAIL_ENABLED, host=settings.SMTP_HOST or None)
     log.info("app_ready")
     try:
         yield

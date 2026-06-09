@@ -1,4 +1,4 @@
-"""Data access for the ``users`` collection."""
+"""Data access for the ``users`` and ``email_verifications`` collections."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from uuid import UUID
 
 from pymongo import ASCENDING, ReturnDocument
 
-from src.modules.auth.model import UserDocument
+from src.modules.auth.model import EmailVerificationDocument, UserDocument
+from src.shared.constants.roles import Role
 from src.shared.utils.ids import new_uuid
 from src.shared.utils.time import utcnow
 
@@ -34,8 +35,8 @@ class AuthRepository:
         )
         await self._collection.create_index(
             [("email", ASCENDING)],
-            unique=False,
-            name="ix_email",
+            unique=True,
+            name="uniq_email",
             sparse=True,
         )
         await self._collection.create_index(
@@ -51,7 +52,16 @@ class AuthRepository:
         doc = await self._collection.find_one({"_id": user_id})
         return UserDocument.model_validate(doc) if doc else None
 
+    async def get_by_email(self, email: str) -> UserDocument | None:
+        doc = await self._collection.find_one({"email": email})
+        return UserDocument.model_validate(doc) if doc else None
+
     # -------------------------------------------------------------- mutations
+    async def create_user(self, user: UserDocument) -> UserDocument:
+        """Insert a fully-formed user document (used by the registration flow)."""
+        await self._collection.insert_one(user.to_mongo())
+        return user
+
     async def upsert_from_firebase(self, claims: dict[str, Any]) -> UserDocument:
         """Insert or update a user from Firebase claims; bumps ``last_login_at``."""
         firebase_uid = str(claims["uid"])
@@ -62,6 +72,9 @@ class AuthRepository:
             "firebase_uid": firebase_uid,
             "created_at": now,
             "is_active": True,
+            # Trust Firebase's verification state for the seed value; our own
+            # confirmation flow flips this for email/password sign-ups.
+            "is_verified": bool(claims.get("email_verified", False)),
         }
         set_always: dict[str, Any] = {
             "email": claims.get("email"),
@@ -109,6 +122,27 @@ class AuthRepository:
         )
         return result.modified_count > 0
 
+    async def mark_verified(self, user_id: UUID) -> bool:
+        """Flag the account as confirmed (login gate) and email-verified."""
+        result = await self._collection.update_one(
+            {"_id": user_id},
+            {
+                "$set": {
+                    "is_verified": True,
+                    "email_verified": True,
+                    "updated_at": utcnow(),
+                }
+            },
+        )
+        return result.modified_count > 0
+
+    async def set_role(self, user_id: UUID, *, role: Role) -> bool:
+        result = await self._collection.update_one(
+            {"_id": user_id},
+            {"$set": {"role": role.value, "updated_at": utcnow()}},
+        )
+        return result.modified_count > 0
+
     async def update_last_login(self, firebase_uid: str, *, when: datetime | None = None) -> None:
         await self._collection.update_one(
             {"firebase_uid": firebase_uid},
@@ -116,4 +150,45 @@ class AuthRepository:
         )
 
 
-__all__ = ["AuthRepository"]
+class EmailVerificationRepository:
+    """Async repository for single-use account-confirmation tokens."""
+
+    COLLECTION: str = EmailVerificationDocument.collection_name
+
+    def __init__(self, db: AsyncDatabase) -> None:
+        self._db = db
+        self._collection: AsyncCollection = db[self.COLLECTION]
+
+    async def ensure_indexes(self) -> None:
+        await self._collection.create_index(
+            [("token_hash", ASCENDING)], unique=True, name="uniq_token_hash"
+        )
+        await self._collection.create_index(
+            [("user_id", ASCENDING)], name="ix_user_id"
+        )
+        # TTL index: Mongo purges expired tokens automatically.
+        await self._collection.create_index(
+            [("expires_at", ASCENDING)], name="ttl_expires_at", expireAfterSeconds=0
+        )
+
+    async def create(self, doc: EmailVerificationDocument) -> EmailVerificationDocument:
+        await self._collection.insert_one(doc.to_mongo())
+        return doc
+
+    async def get_by_token_hash(self, token_hash: str) -> EmailVerificationDocument | None:
+        doc = await self._collection.find_one({"token_hash": token_hash})
+        return EmailVerificationDocument.model_validate(doc) if doc else None
+
+    async def consume(self, verification_id: UUID) -> bool:
+        result = await self._collection.update_one(
+            {"_id": verification_id, "consumed_at": None},
+            {"$set": {"consumed_at": utcnow()}},
+        )
+        return result.modified_count > 0
+
+    async def delete_for_user(self, user_id: UUID) -> int:
+        result = await self._collection.delete_many({"user_id": user_id})
+        return result.deleted_count
+
+
+__all__ = ["AuthRepository", "EmailVerificationRepository"]

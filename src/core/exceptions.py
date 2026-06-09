@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import ORJSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -131,12 +132,16 @@ async def _app_exception_handler(_request: Request, exc: AppException) -> ORJSON
 async def _validation_exception_handler(
     _request: Request, exc: RequestValidationError
 ) -> ORJSONResponse:
-    logger.info("validation_error", errors=exc.errors())
+    # ``exc.errors()`` may embed the original exception object in ``ctx`` (e.g.
+    # for ``model_validator`` failures), which is not JSON-serialisable. Encode
+    # any exception to its string form so the response always serialises.
+    errors = jsonable_encoder(exc.errors(), custom_encoder={Exception: str})
+    logger.info("validation_error", errors=errors)
     return _build_response(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         code="validation_error",
         message="Request validation failed.",
-        details={"errors": exc.errors()},
+        details={"errors": errors},
     )
 
 
