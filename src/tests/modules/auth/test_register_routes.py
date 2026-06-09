@@ -189,6 +189,35 @@ async def test_verify_account_confirms_user() -> None:
     fb.update_user.assert_awaited_once_with("fb-uid-1", email_verified=True)
 
 
+async def test_verify_account_is_idempotent_after_success() -> None:
+    service, repo, verifications, fb = _build_service()
+    user_id = new_uuid()
+    consumed_at = utcnow()
+    record = EmailVerificationDocument(
+        user_id=user_id,
+        firebase_uid="fb-uid-1",
+        email="alice@example.com",
+        token_hash="hash",
+        expires_at=utcnow() + timedelta(hours=1),
+        consumed_at=consumed_at,
+    )
+    verifications.get_by_token_hash = AsyncMock(return_value=record)
+    repo.get_by_id = AsyncMock(
+        return_value=UserDocument(
+            id=user_id,
+            firebase_uid="fb-uid-1",
+            email="alice@example.com",
+            is_verified=True,
+        )
+    )
+
+    result = await service.verify_account("raw-token-value-1234")
+
+    assert "confirmed" in result.message.lower()
+    repo.mark_verified.assert_not_awaited()
+    fb.update_user.assert_not_awaited()
+
+
 async def test_verify_account_rejects_expired_token() -> None:
     service, _repo, verifications, _fb = _build_service()
     record = EmailVerificationDocument(

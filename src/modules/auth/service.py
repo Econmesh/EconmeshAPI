@@ -160,21 +160,29 @@ class AuthService:
         record = await repo.get_by_token_hash(token_hash)
         if record is None:
             raise AuthError("Invalid confirmation token.", code="invalid_verification_token")
+
+        confirmed = MessageResponse(message="Account confirmed. You can now sign in.")
+
         if record.consumed_at is not None:
+            user = await self._repo.get_by_id(record.user_id)
+            if user is not None and user.is_verified:
+                return confirmed
             raise AuthError("Confirmation token already used.", code="verification_token_used")
         if record.expires_at <= utcnow():
             raise AuthError("Confirmation token expired.", code="verification_token_expired")
 
         # Atomically claim the token so a replay cannot double-confirm.
         if not await repo.consume(record.id):
+            user = await self._repo.get_by_id(record.user_id)
+            if user is not None and user.is_verified:
+                return confirmed
             raise AuthError("Confirmation token already used.", code="verification_token_used")
 
         await self._repo.mark_verified(record.user_id)
         await self._firebase.update_user(record.firebase_uid, email_verified=True)
-        await repo.delete_for_user(record.user_id)
 
         logger.info("account_confirmed", user_id=str(record.user_id))
-        return MessageResponse(message="Account confirmed. You can now sign in.")
+        return confirmed
 
     async def resend_verification(self, email: str) -> MessageResponse:
         """Re-issue a confirmation token for an unconfirmed account."""
