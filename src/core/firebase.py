@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import timedelta
 from typing import Any
+from urllib.parse import quote
 
 import firebase_admin
 from firebase_admin import auth as firebase_auth
-from firebase_admin import credentials
+from firebase_admin import credentials, storage
 
 from src.core.config import Settings, get_settings
 from src.core.exceptions import AuthError, ConflictError, ExternalServiceError, NotFoundError
@@ -47,6 +49,8 @@ class FirebaseAdmin:
         options: dict[str, Any] = {}
         if self._settings.FIREBASE_PROJECT_ID:
             options["projectId"] = self._settings.FIREBASE_PROJECT_ID
+        if self._settings.FIREBASE_STORAGE_BUCKET:
+            options["storageBucket"] = self._settings.FIREBASE_STORAGE_BUCKET
 
         self._app = firebase_admin.initialize_app(cred, options or None)
         logger.info("firebase_initialised")
@@ -184,6 +188,60 @@ class FirebaseAdmin:
             await asyncio.to_thread(firebase_auth.delete_user, uid)
         except firebase_auth.UserNotFoundError:
             return
+
+    # -------------------------------------------------------------- storage
+    def _storage_bucket_name(self) -> str:
+        bucket = self._settings.FIREBASE_STORAGE_BUCKET
+        if not bucket:
+            raise ExternalServiceError(
+                "Firebase Storage is not configured.",
+                code="storage_not_configured",
+            )
+        return bucket
+
+    def _public_storage_url(self, storage_key: str) -> str:
+        bucket = self._storage_bucket_name()
+        encoded = quote(storage_key, safe="")
+        return (
+            f"https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{encoded}?alt=media"
+        )
+
+    async def presign_storage_upload(
+        self,
+        storage_key: str,
+        *,
+        content_type: str,
+        expires_in: int = 900,
+    ) -> tuple[str, str]:
+        """Return a signed PUT URL and the public download URL for a storage key."""
+        if self._app is None:
+            raise ExternalServiceError(
+                "Firebase is not initialised.",
+                code="firebase_not_initialised",
+            )
+
+        bucket_name = self._storage_bucket_name()
+
+        def _generate() -> str:
+            bucket = storage.bucket(bucket_name)
+            blob = bucket.blob(storage_key)
+            return blob.generate_signed_url(
+                version="v4",
+                expiration=timedelta(seconds=expires_in),
+                method="PUT",
+                content_type=content_type,
+            )
+
+        try:
+            upload_url = await asyncio.to_thread(_generate)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("firebase_storage_presign_failed")
+            raise ExternalServiceError(
+                "Unable to generate upload URL.",
+                code="storage_presign_failed",
+            ) from exc
+
+        return upload_url, self._public_storage_url(storage_key)
 
 
 firebase = FirebaseAdmin()

@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     FIREBASE_CREDENTIALS_PATH: Path | None = None
     FIREBASE_CREDENTIALS_JSON: str | None = None
     FIREBASE_PROJECT_ID: str | None = None
+    FIREBASE_STORAGE_BUCKET: str | None = None
     # Tolerate small clock drift between this host and Google/Firebase (seconds).
     FIREBASE_CLOCK_SKEW_SECONDS: int = 60
 
