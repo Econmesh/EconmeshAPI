@@ -13,6 +13,7 @@ from src.core.database import mongo
 from src.core.logging import get_logger, setup_logging
 from src.modules.auth.repository import AuthRepository, EmailVerificationRepository
 from src.modules.companies.repository import CompaniesRepository
+from src.modules.users.repository import UsersRepository
 
 logger = get_logger(__name__)
 
@@ -25,6 +26,7 @@ async def _main() -> None:
         await AuthRepository(mongo.db).ensure_indexes()
         await EmailVerificationRepository(mongo.db).ensure_indexes()
         await CompaniesRepository(mongo.db).ensure_indexes()
+        await UsersRepository(mongo.db).ensure_indexes()
         logger.info("indexes_done")
     finally:
         await mongo.close()

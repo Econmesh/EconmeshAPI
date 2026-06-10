@@ -149,6 +149,17 @@ class AuthRepository:
             {"$set": {"last_login_at": when or utcnow()}},
         )
 
+    async def update_profile(
+        self, user_id: UUID, patch: dict[str, object]
+    ) -> UserDocument | None:
+        patch["updated_at"] = utcnow()
+        doc = await self._collection.find_one_and_update(
+            {"_id": user_id},
+            {"$set": patch},
+            return_document=ReturnDocument.AFTER,
+        )
+        return UserDocument.model_validate(doc) if doc else None
+
 
 class EmailVerificationRepository:
     """Async repository for single-use account-confirmation tokens."""
