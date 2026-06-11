@@ -1,0 +1,49 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Deploy: Dashboard → New → Blueprint → connect repo.
+# Secrets (MONGO_URI, REDIS_URL, FIREBASE_CREDENTIALS_JSON, SMTP_PASSWORD, …)
+# must be set manually in the Render dashboard after the first sync.
+
+services:
+  - type: web
+    name: econmesh-api
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: ./build.sh
+    startCommand: ./start.sh
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.14.3"
+      - key: POETRY_VERSION
+        value: "2.1.3"
+      - key: ENV
+        value: production
+      - key: LOG_JSON
+        value: "true"
+      - key: ENABLE_DOCS
+        value: "false"
+      - key: WEB_CONCURRENCY
+        value: "2"
+      - key: MONGO_DB
+        value: econmesh
+      # --- set in dashboard (secrets / external services) ---
+      - key: MONGO_URI
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: TRUSTED_HOSTS
+        sync: false
+      - key: FRONTEND_VERIFY_URL
+        sync: false
