@@ -12,6 +12,7 @@ import asyncio
 from src.core.database import mongo
 from src.core.logging import get_logger, setup_logging
 from src.modules.auth.repository import AuthRepository, EmailVerificationRepository
+from src.modules.coming_soon.repository import ComingSoonRepository
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.users.repository import UsersRepository
 
@@ -25,6 +26,7 @@ async def _main() -> None:
         logger.info("creating_indexes")
         await AuthRepository(mongo.db).ensure_indexes()
         await EmailVerificationRepository(mongo.db).ensure_indexes()
+        await ComingSoonRepository(mongo.db).ensure_indexes()
         await CompaniesRepository(mongo.db).ensure_indexes()
         await UsersRepository(mongo.db).ensure_indexes()
         logger.info("indexes_done")
