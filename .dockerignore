@@ -22,6 +22,7 @@ htmlcov
 # Tests & docs — not needed in runtime image
 src/tests
 **/*.md
+!README.md
 docs/
 
 # Local env / secrets

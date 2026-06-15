@@ -82,7 +82,10 @@ model.py         DomainDocument (persisted shape)
 econmesh-api/
 ├── pyproject.toml             Poetry + ruff + pyright + pytest config
 ├── Dockerfile                 multi-stage production image
+├── docker-entrypoint.sh       container start (PORT / WEB_CONCURRENCY)
 ├── docker-compose.yml         api + mongo + redis
+├── DOKPLOY.md                 deploy guide (Dokploy + Dockerfile)
+├── RENDER.md                  deploy guide (Render)
 ├── .env.example               document every env var
 ├── Makefile                   ergonomic shortcuts
 └── src/
@@ -224,6 +227,17 @@ keep working without any change.
   copy-paste + repointing of the DB connection.
 - **Kubernetes**: `/health` (liveness) and `/health/ready` (readiness) are
   already provided; the Docker image is non-root and tini-init.
+
+---
+
+## Deploy
+
+| Plataforma | Guia | Build |
+| --- | --- | --- |
+| **Dokploy** (VPS / self-hosted) | [`DOKPLOY.md`](DOKPLOY.md) | `Dockerfile` |
+| **Render** (PaaS) | [`RENDER.md`](RENDER.md) | `build.sh` + `start.sh` ou `Dockerfile` |
+
+Health probes: `GET /health` (liveness), `GET /health/ready` (Mongo + Redis).
 
 ---
 

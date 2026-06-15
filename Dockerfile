@@ -50,7 +50,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     VIRTUAL_ENV=/opt/venv \
-    PATH="/opt/venv/bin:$PATH"
+    PATH="/opt/venv/bin:$PATH" \
+    PORT=8000 \
+    WEB_CONCURRENCY=2
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl tini \
@@ -63,18 +65,15 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app src ./src
 COPY --chown=app:app pyproject.toml README.md ./
+COPY --chown=app:app docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 USER app
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl --silent --fail http://127.0.0.1:8000/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl --silent --fail "http://127.0.0.1:${PORT:-8000}/health" || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["gunicorn", "src.main:app", \
-     "-k", "uvicorn.workers.UvicornWorker", \
-     "-w", "4", \
-     "-b", "0.0.0.0:8000", \
-     "--access-logfile", "-", \
-     "--error-logfile", "-", \
-     "--timeout", "60"]
+CMD ["/usr/local/bin/docker-entrypoint.sh"]

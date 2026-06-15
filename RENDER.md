@@ -169,7 +169,7 @@ Se preferir o `Dockerfile` em vez do runtime Python nativo:
 | **Language** | `Docker` |
 | **Dockerfile Path** | `./Dockerfile` |
 
-O `Dockerfile` atual escuta na porta `8000`. No Render, defina a variável de ambiente `PORT=8000` **ou** altere o `CMD` para usar `${PORT:-8000}`.
+O `Dockerfile` usa `docker-entrypoint.sh`, que escuta em `0.0.0.0:$PORT` (padrão `8000`). Defina `PORT=8000` no painel se necessário.
 
 Build local (teste):
 
