@@ -24,6 +24,13 @@ class Environment(StrEnum):
     TEST = "test"
 
 
+class FirebaseCredentialsSource(StrEnum):
+    """How Firebase Admin credentials are supplied."""
+
+    PATH = "path"  # service-account JSON file on disk
+    JSON = "json"  # inline JSON string (PaaS / secret managers)
+
+
 class Settings(BaseSettings):
     """Strongly-typed application settings, populated from env vars / `.env`."""
 
@@ -70,7 +77,8 @@ class Settings(BaseSettings):
     SESSION_TTL_SECONDS: int = 3_600
 
     # --- Firebase -------------------------------------------------------------
-    # One of the two MUST be provided in non-test environments.
+    # Set FIREBASE_CREDENTIALS_SOURCE to choose path vs inline JSON.
+    FIREBASE_CREDENTIALS_SOURCE: FirebaseCredentialsSource = FirebaseCredentialsSource.PATH
     FIREBASE_CREDENTIALS_PATH: Path | None = None
     FIREBASE_CREDENTIALS_JSON: str | None = None
     FIREBASE_PROJECT_ID: str | None = None

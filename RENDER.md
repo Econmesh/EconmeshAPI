@@ -100,11 +100,12 @@ Alternativa: o arquivo `.python-version` na raiz já define `3.14.3`.
 | `MONGO_URI` | `mongodb+srv://user:pass@cluster.mongodb.net` |
 | `MONGO_DB` | `econmesh` |
 | `REDIS_URL` | `rediss://default:pass@host:6379` (TLS se o provedor exigir) |
+| `FIREBASE_CREDENTIALS_SOURCE` | `json` |
 | `FIREBASE_CREDENTIALS_JSON` | JSON completo da service account (uma linha) |
 | `FIREBASE_PROJECT_ID` | ID do projeto Firebase |
 | `FIREBASE_STORAGE_BUCKET` | `seu-projeto.appspot.com` |
 
-> Use `FIREBASE_CREDENTIALS_JSON` no Render em vez de arquivo (`FIREBASE_CREDENTIALS_PATH`). Cole o conteúdo do `serviceAccountKey.json` como secret.
+> Use `FIREBASE_CREDENTIALS_SOURCE=json` e `FIREBASE_CREDENTIALS_JSON` no Render. Cole o conteúdo do `serviceAccountKey.json` como secret.
 
 ### Recomendadas
 

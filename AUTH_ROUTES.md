@@ -40,9 +40,9 @@ Criacao por admin (`POST /api/v1/auth/admin/users`) aceita `role` e `auto_confir
 
 ## Como o Firebase Auth entra no fluxo
 
-1. O app inicializa o Firebase Admin no startup (`firebase.init()`), usando:
-   - `FIREBASE_CREDENTIALS_PATH` **ou**
-   - `FIREBASE_CREDENTIALS_JSON`
+1. O app inicializa o Firebase Admin no startup (`firebase.init()`), usando `FIREBASE_CREDENTIALS_SOURCE`:
+   - `path` → `FIREBASE_CREDENTIALS_PATH` (arquivo JSON no disco)
+   - `json` → `FIREBASE_CREDENTIALS_JSON` (JSON inline em variável de ambiente)
 2. O cliente autentica no Firebase (frontend/mobile) e envia o **Firebase ID token** para a API.
 3. A API valida o token via `firebase.verify_id_token(...)`.
 4. Claims decodificados sao usados para:

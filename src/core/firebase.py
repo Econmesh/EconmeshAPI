@@ -16,7 +16,7 @@ import firebase_admin
 from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials, storage
 
-from src.core.config import Settings, get_settings
+from src.core.config import FirebaseCredentialsSource, Settings, get_settings
 from src.core.exceptions import AuthError, ConflictError, ExternalServiceError, NotFoundError
 from src.core.logging import get_logger
 
@@ -43,7 +43,8 @@ class FirebaseAdmin:
                 return
             raise RuntimeError(
                 "Firebase credentials are not configured. Set "
-                "FIREBASE_CREDENTIALS_PATH or FIREBASE_CREDENTIALS_JSON."
+                "FIREBASE_CREDENTIALS_SOURCE=path with FIREBASE_CREDENTIALS_PATH, or "
+                "FIREBASE_CREDENTIALS_SOURCE=json with FIREBASE_CREDENTIALS_JSON."
             )
 
         options: dict[str, Any] = {}
@@ -63,23 +64,37 @@ class FirebaseAdmin:
         logger.info("firebase_shutdown")
 
     def _load_credentials(self) -> credentials.Base | None:
-        if self._settings.FIREBASE_CREDENTIALS_PATH is not None:
-            path = self._settings.FIREBASE_CREDENTIALS_PATH
-            if not path.exists():
-                logger.warning("firebase_credentials_path_missing", path=str(path))
-                return None
-            return credentials.Certificate(str(path))
+        source = self._settings.FIREBASE_CREDENTIALS_SOURCE
+        if source is FirebaseCredentialsSource.JSON:
+            return self._load_credentials_from_json()
+        return self._load_credentials_from_path()
 
-        if self._settings.FIREBASE_CREDENTIALS_JSON:
-            try:
-                data = json.loads(self._settings.FIREBASE_CREDENTIALS_JSON)
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(
-                    "FIREBASE_CREDENTIALS_JSON is not valid JSON."
-                ) from exc
-            return credentials.Certificate(data)
+    def _load_credentials_from_path(self) -> credentials.Base | None:
+        path = self._settings.FIREBASE_CREDENTIALS_PATH
+        if path is None:
+            logger.warning("firebase_credentials_path_not_set")
+            return None
+        if not path.exists():
+            raise RuntimeError(
+                f"Firebase credentials file not found at {path}. "
+                "Check FIREBASE_CREDENTIALS_PATH or set FIREBASE_CREDENTIALS_SOURCE=json."
+            )
+        logger.info("firebase_credentials_loaded", source="path", path=str(path))
+        return credentials.Certificate(str(path))
 
-        return None
+    def _load_credentials_from_json(self) -> credentials.Base | None:
+        raw = self._settings.FIREBASE_CREDENTIALS_JSON
+        if not raw:
+            logger.warning("firebase_credentials_json_not_set")
+            return None
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "FIREBASE_CREDENTIALS_JSON is not valid JSON."
+            ) from exc
+        logger.info("firebase_credentials_loaded", source="json")
+        return credentials.Certificate(data)
 
     # ------------------------------------------------------------------ auth
     async def verify_id_token(

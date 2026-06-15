@@ -84,6 +84,7 @@ MONGO_DB=econmesh
 REDIS_URL=redis://:password@redis-host:6379/0
 
 # Cole o JSON completo do service account (uma linha):
+FIREBASE_CREDENTIALS_SOURCE=json
 FIREBASE_CREDENTIALS_JSON={"type":"service_account",...}
 FIREBASE_PROJECT_ID=seu-projeto-id
 FIREBASE_STORAGE_BUCKET=seu-projeto-id.appspot.com
@@ -110,12 +111,14 @@ FRONTEND_VERIFY_URL=https://app.econmesh.com/verify
 
 ### Firebase — duas opções
 
-| Opção | Variável | Quando usar |
-| --- | --- | --- |
-| **JSON inline** (recomendado) | `FIREBASE_CREDENTIALS_JSON` | Dokploy / PaaS sem volume de secrets |
-| Arquivo em disco | `FIREBASE_CREDENTIALS_PATH` | Se montar volume com o JSON |
+Defina `FIREBASE_CREDENTIALS_SOURCE` para escolher a origem:
 
-Para Dokploy, prefira `FIREBASE_CREDENTIALS_JSON` com o conteúdo do `firebase-adminsdk-*.json` em uma única linha.
+| `FIREBASE_CREDENTIALS_SOURCE` | Variável adicional | Quando usar |
+| --- | --- | --- |
+| `json` (recomendado) | `FIREBASE_CREDENTIALS_JSON` | Dokploy / PaaS sem volume de secrets |
+| `path` | `FIREBASE_CREDENTIALS_PATH` | Docker Compose com volume `./secrets` |
+
+Para Dokploy, use `FIREBASE_CREDENTIALS_SOURCE=json` e cole o conteúdo do `firebase-adminsdk-*.json` em `FIREBASE_CREDENTIALS_JSON` (uma linha).
 
 ---
 
@@ -149,6 +152,7 @@ docker run --rm -p 8000:8000 \
   -e ENV=development \
   -e MONGO_URI=mongodb://host.docker.internal:27017 \
   -e REDIS_URL=redis://host.docker.internal:6379/0 \
+  -e FIREBASE_CREDENTIALS_SOURCE=json \
   -e FIREBASE_CREDENTIALS_JSON='{"type":"service_account",...}' \
   econmesh-api:local
 ```
@@ -195,5 +199,5 @@ Dokploy → Application → Dockerfile
   Dockerfile: Dockerfile
   Domain Port: 8000
   Health: /health
-  ENV: production + MONGO_URI + REDIS_URL + FIREBASE_CREDENTIALS_JSON
+  ENV: production + MONGO_URI + REDIS_URL + FIREBASE_CREDENTIALS_SOURCE=json + FIREBASE_CREDENTIALS_JSON
 ```
