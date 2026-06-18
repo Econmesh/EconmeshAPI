@@ -18,7 +18,7 @@ from src.modules.companies.schema import (
     LogoPresignRequest,
     LogoPresignResponse,
 )
-from src.shared.utils.ids import new_uuid
+from src.shared.utils.storage_keys import logo_storage_key
 from src.shared.utils.time import utcnow
 
 _ALLOWED_LOGO_TYPES = {
@@ -164,7 +164,7 @@ class CompaniesService:
             )
 
         extension = payload.filename.rsplit(".", 1)[-1].lower() if "." in payload.filename else "bin"
-        storage_key = f"companies/{owner_user_id}/{new_uuid()}.{extension}"
+        storage_key = logo_storage_key(owner_user_id, extension)
         expires_in = 900
         expires_at = utcnow() + timedelta(seconds=expires_in)
 

@@ -36,6 +36,9 @@ class AuthController:
     async def login(self, payload: LoginRequest) -> LoginResponse:
         return await self._service.login_with_id_token(payload.id_token)
 
+    async def admin_login(self, payload: LoginRequest) -> LoginResponse:
+        return await self._service.admin_login_with_id_token(payload.id_token)
+
     async def me(self, current_user: CurrentUser) -> MeResponse:
         return await self._service.get_me(current_user.uid)
 

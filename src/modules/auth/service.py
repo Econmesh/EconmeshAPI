@@ -231,6 +231,13 @@ class AuthService:
             token=self._to_token_introspection(claims),
         )
 
+    async def admin_login_with_id_token(self, id_token: str) -> LoginResponse:
+        """Admin-panel login — same as public login but requires ``role=admin``."""
+        response = await self.login_with_id_token(id_token)
+        if response.user.role != Role.ADMIN:
+            raise ForbiddenError("Admin access required.", code="admin_required")
+        return response
+
     # ----------------------------------------------------------------- me
     async def get_me(self, firebase_uid: str) -> MeResponse:
         user = await self._repo.get_by_firebase_uid(firebase_uid)

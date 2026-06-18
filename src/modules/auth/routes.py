@@ -105,6 +105,16 @@ async def login(payload: LoginRequest, controller: ControllerDep) -> LoginRespon
     return await controller.login(payload)
 
 
+@router.post(
+    "/admin/login",
+    response_model=LoginResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Admin-panel login — requires role=admin.",
+)
+async def admin_login(payload: LoginRequest, controller: ControllerDep) -> LoginResponse:
+    return await controller.admin_login(payload)
+
+
 @router.get(
     "/me",
     response_model=MeResponse,

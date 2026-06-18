@@ -42,6 +42,7 @@ class AuthRepository:
         await self._collection.create_index(
             [("created_at", ASCENDING)], name="ix_created_at"
         )
+        await self._collection.create_index([("role", ASCENDING)], name="ix_role")
 
     # -------------------------------------------------------------- queries
     async def get_by_firebase_uid(self, firebase_uid: str) -> UserDocument | None:
@@ -55,6 +56,48 @@ class AuthRepository:
     async def get_by_email(self, email: str) -> UserDocument | None:
         doc = await self._collection.find_one({"email": email})
         return UserDocument.model_validate(doc) if doc else None
+
+    async def list_users(
+        self,
+        *,
+        skip: int,
+        limit: int,
+        role: Role | None = None,
+        is_active: bool | None = None,
+        email: str | None = None,
+    ) -> list[UserDocument]:
+        query: dict[str, object] = {}
+        if role is not None:
+            query["role"] = role.value
+        if is_active is not None:
+            query["is_active"] = is_active
+        if email:
+            query["email"] = {"$regex": email, "$options": "i"}
+
+        cursor = (
+            self._collection.find(query)
+            .sort("created_at", ASCENDING)
+            .skip(skip)
+            .limit(limit)
+        )
+        docs = await cursor.to_list(length=limit)
+        return [UserDocument.model_validate(doc) for doc in docs]
+
+    async def count_users(
+        self,
+        *,
+        role: Role | None = None,
+        is_active: bool | None = None,
+        email: str | None = None,
+    ) -> int:
+        query: dict[str, object] = {}
+        if role is not None:
+            query["role"] = role.value
+        if is_active is not None:
+            query["is_active"] = is_active
+        if email:
+            query["email"] = {"$regex": email, "$options": "i"}
+        return await self._collection.count_documents(query)
 
     # -------------------------------------------------------------- mutations
     async def create_user(self, user: UserDocument) -> UserDocument:

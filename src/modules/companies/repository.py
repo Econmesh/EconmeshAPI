@@ -53,6 +53,19 @@ class CompaniesRepository:
             {"owner_user_id": owner_user_id, "is_active": True}
         )
 
+    async def list_all(self, *, skip: int, limit: int) -> list[CompanyDocument]:
+        cursor = (
+            self._collection.find({"is_active": True})
+            .sort("created_at", ASCENDING)
+            .skip(skip)
+            .limit(limit)
+        )
+        docs = await cursor.to_list(length=limit)
+        return [CompanyDocument.model_validate(doc) for doc in docs]
+
+    async def count_all(self) -> int:
+        return await self._collection.count_documents({"is_active": True})
+
     async def get(self, company_id: UUID) -> CompanyDocument | None:
         doc = await self._collection.find_one({"_id": company_id})
         return CompanyDocument.model_validate(doc) if doc else None

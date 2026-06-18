@@ -46,7 +46,7 @@ def _sample_company(owner_id: UUID | None = None) -> CompanyResponse:
         country="BR",
         website="https://acme.com",
         description="Empresa de reciclagem.",
-        logo_storage_key="companies/logo.png",
+        logo_storage_key="econmesh/logos/logo.png",
         logo_url="https://example.com/logo.png",
         sector="Reciclagem",
         is_active=True,
@@ -166,7 +166,7 @@ async def test_presign_logo_returns_upload_url(app: FastAPI, client: AsyncClient
             assert payload.filename == "logo.png"
             return LogoPresignResponse(
                 upload_url="https://storage.example/upload",
-                storage_key="companies/test/logo.png",
+                storage_key="econmesh/logos/test/logo.png",
                 public_url="https://storage.example/logo.png",
                 expires_at=now,
             )
@@ -181,7 +181,7 @@ async def test_presign_logo_returns_upload_url(app: FastAPI, client: AsyncClient
         )
         assert response.status_code == 200
         body = response.json()
-        assert body["storage_key"] == "companies/test/logo.png"
+        assert body["storage_key"] == "econmesh/logos/test/logo.png"
         assert "upload_url" in body
     finally:
         app.dependency_overrides.clear()

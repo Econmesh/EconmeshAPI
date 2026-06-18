@@ -28,12 +28,14 @@ from src.core.exceptions import register_exception_handlers
 from src.core.firebase import firebase
 from src.core.logging import get_logger, setup_logging
 from src.infrastructure.redis.client import redis_manager
+from src.modules.admin import router as admin_router
 from src.modules.auth import router as auth_router
 from src.modules.blockchain import router as blockchain_router
 from src.modules.coming_soon import router as coming_soon_router
 from src.modules.circularity import router as circularity_router
 from src.modules.companies import router as companies_router
 from src.modules.files import router as files_router
+from src.modules.opportunities import router as opportunities_router
 from src.modules.users import router as users_router
 from src.shared.middleware import (
     AccessLogMiddleware,
@@ -144,9 +146,11 @@ def _configure_middleware(app: FastAPI, settings: Settings) -> None:
 def _register_routers(app: FastAPI, settings: Settings) -> None:
     api_v1 = APIRouter(prefix=settings.API_V1_PREFIX)
     api_v1.include_router(auth_router)
+    api_v1.include_router(admin_router)
     api_v1.include_router(coming_soon_router)
     api_v1.include_router(users_router)
     api_v1.include_router(companies_router)
+    api_v1.include_router(opportunities_router)
     api_v1.include_router(circularity_router)
     api_v1.include_router(files_router)
     api_v1.include_router(blockchain_router)

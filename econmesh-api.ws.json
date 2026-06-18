@@ -1,0 +1,1268 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-06-16T14:57:07.000Z",
+  "__export_source": "econmesh-api:insomnia-generator",
+  "resources": [
+    {
+      "_id": "wrk_f83e4aa0d6db4892ae9e7af674acfc2d",
+      "parentId": null,
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "name": "Econmesh API",
+      "description": "Coleção completa de rotas da Econmesh API (FastAPI)",
+      "scope": "collection",
+      "_type": "workspace"
+    },
+    {
+      "_id": "env_8d5d21342fda420fbc9ee6ebfae3318a",
+      "parentId": "wrk_f83e4aa0d6db4892ae9e7af674acfc2d",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "name": "Base Environment",
+      "data": {
+        "base_url": "http://localhost:8000",
+        "api_prefix": "/api/v1",
+        "firebase_token": "",
+        "verification_token": "",
+        "company_id": "00000000-0000-0000-0000-000000000001",
+        "opportunity_id": "00000000-0000-0000-0000-000000000002"
+      },
+      "dataPropertyOrder": {
+        "&": [
+          "base_url",
+          "api_prefix",
+          "firebase_token",
+          "verification_token",
+          "company_id",
+          "opportunity_id"
+        ]
+      },
+      "color": null,
+      "isPrivate": false,
+      "metaSortKey": 1781621807635,
+      "_type": "environment"
+    },
+    {
+      "_id": "env_e5cc60880b254df393791ea2919f0b81",
+      "parentId": "env_8d5d21342fda420fbc9ee6ebfae3318a",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "name": "Production",
+      "data": {
+        "base_url": "https://api.econmesh.com.br",
+        "api_prefix": "/api/v1",
+        "firebase_token": "",
+        "verification_token": "",
+        "company_id": "00000000-0000-0000-0000-000000000001",
+        "opportunity_id": "00000000-0000-0000-0000-000000000002"
+      },
+      "dataPropertyOrder": {
+        "&": [
+          "base_url",
+          "api_prefix",
+          "firebase_token",
+          "verification_token",
+          "company_id",
+          "opportunity_id"
+        ]
+      },
+      "color": "#d9534f",
+      "isPrivate": false,
+      "metaSortKey": 1781621807636,
+      "_type": "environment"
+    },
+    {
+      "_id": "fld_e0dad7f5709c42579dd063501d85a0ce",
+      "parentId": "wrk_f83e4aa0d6db4892ae9e7af674acfc2d",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "name": "Health",
+      "description": "",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -1000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_88f7e277f57e405eb37548c4f828fe22",
+      "parentId": "wrk_f83e4aa0d6db4892ae9e7af674acfc2d",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "name": "Auth",
+      "description": "",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -2000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_8c6588f2556d486989357fe5984e04a1",
+      "parentId": "wrk_f83e4aa0d6db4892ae9e7af674acfc2d",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "name": "Coming Soon",
+      "description": "",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -3000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_ca1aafafee8441ab836d74b2fd9f83ce",
+      "parentId": "wrk_f83e4aa0d6db4892ae9e7af674acfc2d",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "name": "Users",
+      "description": "",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -4000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_89ad74b1a8e2422c8f95fc5f36959319",
+      "parentId": "wrk_f83e4aa0d6db4892ae9e7af674acfc2d",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "name": "Companies",
+      "description": "",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -5000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_8e2052b8270243e5b459acf475e4e673",
+      "parentId": "wrk_f83e4aa0d6db4892ae9e7af674acfc2d",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "name": "Opportunities",
+      "description": "",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -6000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_f70bc3be8c8c4f3f9f2b806d142bbbdc",
+      "parentId": "wrk_f83e4aa0d6db4892ae9e7af674acfc2d",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "name": "Circularity",
+      "description": "",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -7000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_50286c91f2894b7ab0dabb9e22458fa7",
+      "parentId": "wrk_f83e4aa0d6db4892ae9e7af674acfc2d",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "name": "Files",
+      "description": "",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -8000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "fld_549a863c3bae4807a5e260c0fb2166aa",
+      "parentId": "wrk_f83e4aa0d6db4892ae9e7af674acfc2d",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "name": "Blockchain",
+      "description": "",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -9000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "req_06e56c78a21f4d729f70c24f36276b32",
+      "parentId": "fld_e0dad7f5709c42579dd063501d85a0ce",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}/health",
+      "name": "Liveness",
+      "description": "Process is up",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_56fefa6ef29841e5995edf7bf8669529",
+      "parentId": "fld_e0dad7f5709c42579dd063501d85a0ce",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}/health/ready",
+      "name": "Readiness",
+      "description": "Mongo + Redis checks",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_e28fb6536a1a43e985623ee62a5ee23c",
+      "parentId": "fld_e0dad7f5709c42579dd063501d85a0ce",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}/",
+      "name": "Root",
+      "description": "API metadata",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ea8dfd68de334075b9983d397b5d1567",
+      "parentId": "fld_88f7e277f57e405eb37548c4f828fe22",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/auth/register",
+      "name": "Register",
+      "description": "",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"full_name\": \"João Silva\",\n  \"email\": \"joao@example.com\",\n  \"phone\": \"+5511999999999\",\n  \"password\": \"SenhaSegura123\",\n  \"password_confirm\": \"SenhaSegura123\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_7060b2f33820412f972b370d75051e41"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_f00dde8b7583445eb5debb242295e255",
+      "parentId": "fld_88f7e277f57e405eb37548c4f828fe22",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/auth/admin/users",
+      "name": "Admin Create User",
+      "description": "",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"full_name\": \"Admin User\",\n  \"email\": \"admin@example.com\",\n  \"password\": \"SenhaSegura123\",\n  \"role\": \"admin\",\n  \"auto_confirm\": true\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_4680a851d19b4bff87467d7432f795bd"
+        },
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_99be0e6673144054adc3047a9d313c62"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_377ddc3f343f4d789176a0afe807e248",
+      "parentId": "fld_88f7e277f57e405eb37548c4f828fe22",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/auth/verify",
+      "name": "Verify Account",
+      "description": "",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"token\": \"{{ _.verification_token }}\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_f01fb3c1b20440b08afd56f82dd3cefd"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_b6aa7bc096bd43969a47bce95f93d342",
+      "parentId": "fld_88f7e277f57e405eb37548c4f828fe22",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/auth/resend-verification",
+      "name": "Resend Verification",
+      "description": "",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"email\": \"joao@example.com\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_ec5c788d85a6421c846814d329ac4385"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_31f3a1756c7d4b15af821afadb8d6c16",
+      "parentId": "fld_88f7e277f57e405eb37548c4f828fe22",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/auth/login",
+      "name": "Login",
+      "description": "",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"id_token\": \"{{ _.firebase_token }}\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_578addad63324b93bb08f71d7a72b665"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_ddbcec1358944335b6b9bce8ce67b636",
+      "parentId": "fld_88f7e277f57e405eb37548c4f828fe22",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/auth/me",
+      "name": "Me",
+      "description": "",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_502300a2aec8455fbb7341b4400ac9c8"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_da1434022ecd4cd5b15672436039a69f",
+      "parentId": "fld_88f7e277f57e405eb37548c4f828fe22",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/auth/logout",
+      "name": "Logout",
+      "description": "",
+      "method": "POST",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_daf279741a974fc5a031e3f6a4b74710"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_6a76497a1f8c40efb32bc194360e466f",
+      "parentId": "fld_88f7e277f57e405eb37548c4f828fe22",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/auth/revoke-all",
+      "name": "Revoke All",
+      "description": "",
+      "method": "POST",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_3d5b1464289243aaa87bf67cfcff7241"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_a9aef85ca39f40eb86088ead8c7e61e9",
+      "parentId": "fld_8c6588f2556d486989357fe5984e04a1",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/coming-soon/subscribe",
+      "name": "Subscribe",
+      "description": "",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"email\": \"notify@example.com\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_d3bd22608ad24ab784d197d1134aed86"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_a88c72bcee8f4cb9b97a10bd67b017fc",
+      "parentId": "fld_ca1aafafee8441ab836d74b2fd9f83ce",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/users/me/profile",
+      "name": "Get Profile",
+      "description": "",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_942456004ef84659ab38e4c749aa5081"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_01df3d454b95458da1c51315d34a0270",
+      "parentId": "fld_ca1aafafee8441ab836d74b2fd9f83ce",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/users/me/profile",
+      "name": "Update Profile",
+      "description": "",
+      "method": "PATCH",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"name\": \"João Silva\",\n  \"phone\": \"+5511999999999\",\n  \"cpf\": \"52998224725\",\n  \"job_title\": \"Engenheiro\",\n  \"country\": \"BR\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_14549589b47e4c4fa8d8c441d42b7df4"
+        },
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_b1c8876598864f5db9b5e6a6481fe952"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_440d196b1c204efda2fed984c61eed7f",
+      "parentId": "fld_ca1aafafee8441ab836d74b2fd9f83ce",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/users/avatar/presign",
+      "name": "Avatar Presign",
+      "description": "",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"filename\": \"avatar.jpg\",\n  \"content_type\": \"image/jpeg\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_16d6414616fb4aeca879df705dd0a85b"
+        },
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_aeee71214a324e5bbbe53d1860b93455"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_e7fa5bd1b2fe4597842fa70e15e771a2",
+      "parentId": "fld_89ad74b1a8e2422c8f95fc5f36959319",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/companies",
+      "name": "List Companies",
+      "description": "",
+      "method": "GET",
+      "body": {},
+      "parameters": [
+        {
+          "name": "page",
+          "value": "1",
+          "id": "pair_bab33495d7024944a7944ffe0e8de090"
+        },
+        {
+          "name": "page_size",
+          "value": "20",
+          "id": "pair_5469fae2e32349e79b87833260ed298f"
+        }
+      ],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_86d42b257675483caae276ec373e544d"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_6c0f466f563c46cdb2b3b404b1af90e8",
+      "parentId": "fld_89ad74b1a8e2422c8f95fc5f36959319",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/companies",
+      "name": "Create Company",
+      "description": "",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"legal_name\": \"Empresa Exemplo LTDA\",\n  \"trade_name\": \"Exemplo\",\n  \"tax_id\": \"12345678000199\",\n  \"email\": \"contato@exemplo.com\",\n  \"phone\": \"+551133334444\",\n  \"country\": \"BR\",\n  \"sector\": \"Reciclagem\",\n  \"address\": {\n    \"postal_code\": \"01310100\",\n    \"street\": \"Av. Paulista\",\n    \"number\": \"1000\",\n    \"city\": \"São Paulo\",\n    \"state\": \"SP\"\n  }\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_17e669313a494191b99b8fb9f35b568e"
+        },
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_e3908df188894a039c24c6828c9a2055"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_241bfb05c23749d99c746c588b79b354",
+      "parentId": "fld_89ad74b1a8e2422c8f95fc5f36959319",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/companies/logo/presign",
+      "name": "Logo Presign",
+      "description": "",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"filename\": \"logo.png\",\n  \"content_type\": \"image/png\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_7b7b9b6e32ab4a5285ace68155dddad4"
+        },
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_ba7512985dfd4eb3bab9394b3ba339ae"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_65b86bdb572f4e59b63e1ad9ee41f368",
+      "parentId": "fld_89ad74b1a8e2422c8f95fc5f36959319",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/companies/{ _.company_id }",
+      "name": "Get Company",
+      "description": "",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_3bf220aaf7f64ae9b339f4e54914da7c"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_fdd709ce225d44519e9ba3a2d8b15398",
+      "parentId": "fld_89ad74b1a8e2422c8f95fc5f36959319",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/companies/{ _.company_id }",
+      "name": "Update Company",
+      "description": "",
+      "method": "PATCH",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"trade_name\": \"Exemplo Atualizado\",\n  \"description\": \"Descrição atualizada\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_a8efb4573b3249d9b99efa413d67433d"
+        },
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_fd5e7ecfbb3245628886075962889a73"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_71c31a0c041041ee8c8b48e639f3c6db",
+      "parentId": "fld_89ad74b1a8e2422c8f95fc5f36959319",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/companies/{ _.company_id }",
+      "name": "Delete Company",
+      "description": "",
+      "method": "DELETE",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_97cfb2a8cc61420594cd600ae7ac5fc2"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_d39d635b6daf48ecad38349a99b56da6",
+      "parentId": "fld_8e2052b8270243e5b459acf475e4e673",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/opportunities",
+      "name": "List Opportunities",
+      "description": "",
+      "method": "GET",
+      "body": {},
+      "parameters": [
+        {
+          "name": "page",
+          "value": "1",
+          "id": "pair_a15870be9f0649a4bb941ef7c0e51ca2"
+        },
+        {
+          "name": "page_size",
+          "value": "12",
+          "id": "pair_f50b4fcb6cfb4c4691bd556b9980b5ac"
+        },
+        {
+          "name": "sort",
+          "value": "newest",
+          "id": "pair_234d7464351d4aa38c1c3ef5dd7415c3",
+          "disabled": true
+        },
+        {
+          "name": "q",
+          "value": "",
+          "id": "pair_5b82dfc6fb284103938abec12a315c7d",
+          "disabled": true
+        },
+        {
+          "name": "opportunity_type",
+          "value": "comercializacao",
+          "id": "pair_88b1e64914ad4511b46f00894f423e47",
+          "disabled": true
+        },
+        {
+          "name": "offer_demand",
+          "value": "gerador",
+          "id": "pair_91a98f89b6a3445ab5ae4bb63fa51a09",
+          "disabled": true
+        },
+        {
+          "name": "state",
+          "value": "SP",
+          "id": "pair_df1fa89dfa234428af33031bbfd403f8",
+          "disabled": true
+        }
+      ],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_4322c8b020984a90acdcf7f4eaeffd68"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_12017201afc749c380690678b1ed4215",
+      "parentId": "fld_8e2052b8270243e5b459acf475e4e673",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/opportunities",
+      "name": "Create Opportunity",
+      "description": "",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"company_id\": \"{{ _.company_id }}\",\n  \"title\": \"Plástico PET reciclado\",\n  \"description\": \"Lote de PET pós-consumo, lavado e triturado, pronto para extrusão.\",\n  \"opportunity_type\": \"comercializacao\",\n  \"offer_demand\": \"gerador\",\n  \"category\": \"Plásticos\",\n  \"technical_detail\": \"PET transparente\",\n  \"physical_state\": \"Flocos\",\n  \"periodicity\": \"continua\",\n  \"quantity\": 5000,\n  \"unit\": \"kg\",\n  \"price\": 2.5,\n  \"price_negotiable\": false,\n  \"city\": \"São Paulo\",\n  \"state\": \"SP\",\n  \"images\": []\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_873324c80ddf4127aecc94bc2ba5f6b6"
+        },
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_d6f5a516408d4e819dee9c034284a492"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_1098cf52b8ae458dae5d44986d5da4db",
+      "parentId": "fld_8e2052b8270243e5b459acf475e4e673",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/opportunities/images/presign",
+      "name": "Image Presign",
+      "description": "",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"filename\": \"foto.jpg\",\n  \"content_type\": \"image/jpeg\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_50d70e60fc054596b344afd9e365200c"
+        },
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_5a08a4a793ca4b47b52efff2d95a64c7"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_65cc4df070864c59acb32bcdbd7f71a8",
+      "parentId": "fld_8e2052b8270243e5b459acf475e4e673",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/opportunities/{ _.opportunity_id }",
+      "name": "Get Opportunity",
+      "description": "",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_2c6738cf828348db885a773703ce64c2"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_197669f221744e9aadea453abf3d5f4c",
+      "parentId": "fld_8e2052b8270243e5b459acf475e4e673",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/opportunities/{ _.opportunity_id }",
+      "name": "Update Opportunity",
+      "description": "",
+      "method": "PATCH",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"title\": \"Plástico PET reciclado - atualizado\",\n  \"price_negotiable\": true\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json",
+          "id": "pair_ded8b05089ea44fabc629ec64bc00582"
+        },
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_e53f96cb46c24984b43564de930c74f8"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_42cec2ae6ef742a1ab801aaaac6c2603",
+      "parentId": "fld_8e2052b8270243e5b459acf475e4e673",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/opportunities/{ _.opportunity_id }",
+      "name": "Delete Opportunity",
+      "description": "",
+      "method": "DELETE",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_a344485de15f4c7e8655fadb48b84d9f"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_1c52c825e0f04f5989122bc0f589c7b2",
+      "parentId": "fld_f70bc3be8c8c4f3f9f2b806d142bbbdc",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/circularity/companies/{ _.company_id }/flows",
+      "name": "List Company Flows",
+      "description": "",
+      "method": "GET",
+      "body": {},
+      "parameters": [
+        {
+          "name": "page",
+          "value": "1",
+          "id": "pair_e96d0387600144fd94e4461e3b849471"
+        },
+        {
+          "name": "page_size",
+          "value": "20",
+          "id": "pair_a635565c00a14cc38f809a1149cef9f7"
+        }
+      ],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_b01751a2f5e44d35b0a6cb97491f67b6"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_b6f9e7038b174017b7ffb404cff5d95a",
+      "parentId": "fld_50286c91f2894b7ab0dabb9e22458fa7",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/files",
+      "name": "List Files",
+      "description": "",
+      "method": "GET",
+      "body": {},
+      "parameters": [
+        {
+          "name": "page",
+          "value": "1",
+          "id": "pair_094797c562314d449cfa4d452d9cab04"
+        },
+        {
+          "name": "page_size",
+          "value": "20",
+          "id": "pair_66d2c6c6c2f049089869fdc63d11d588"
+        }
+      ],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_112235423d3c497a90d0401e9110eeb9"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_f751b5722938420b9e1b2e5f0a828e0a",
+      "parentId": "fld_549a863c3bae4807a5e260c0fb2166aa",
+      "modified": 1781621807635,
+      "created": 1781621807635,
+      "url": "{{ _.base_url }}{{ _.api_prefix }}/blockchain/anchors",
+      "name": "List Anchors",
+      "description": "",
+      "method": "GET",
+      "body": {},
+      "parameters": [
+        {
+          "name": "page",
+          "value": "1",
+          "id": "pair_d0761f1e887c4414a82e652042c1b379"
+        },
+        {
+          "name": "page_size",
+          "value": "20",
+          "id": "pair_8dca09bdabe94b958351070a3ca9d006"
+        }
+      ],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.firebase_token }}",
+          "id": "pair_05568f4d99a045a4a1a6aa8c900bd1af"
+        }
+      ],
+      "authentication": {},
+      "preRequestScript": "",
+      "metaSortKey": -1781621807635,
+      "isPrivate": false,
+      "afterResponseScript": "",
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    }
+  ]
+}

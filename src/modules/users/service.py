@@ -18,7 +18,7 @@ from src.modules.users.schema import (
     UserProfileResponse,
     UserProfileUpdate,
 )
-from src.shared.utils.ids import new_uuid
+from src.shared.utils.storage_keys import avatar_storage_key
 from src.shared.utils.time import utcnow
 
 _ALLOWED_AVATAR_TYPES = {
@@ -168,7 +168,7 @@ class UsersService:
             if "." in payload.filename
             else "bin"
         )
-        storage_key = f"users/{user.id}/{new_uuid()}.{extension}"
+        storage_key = avatar_storage_key(user.id, extension)
         expires_in = 900
         expires_at = utcnow() + timedelta(seconds=expires_in)
 

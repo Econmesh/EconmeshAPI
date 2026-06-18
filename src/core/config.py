@@ -76,13 +76,23 @@ class Settings(BaseSettings):
     REDIS_MAX_CONNECTIONS: int = 50
     SESSION_TTL_SECONDS: int = 3_600
 
-    # --- Firebase -------------------------------------------------------------
-    # Set FIREBASE_CREDENTIALS_SOURCE to choose path vs inline JSON.
+    # --- Firebase Auth (ID token verification, user management) ---------------
+    # Legacy names FIREBASE_CREDENTIALS_* / FIREBASE_PROJECT_ID refer to the auth project.
     FIREBASE_CREDENTIALS_SOURCE: FirebaseCredentialsSource = FirebaseCredentialsSource.PATH
     FIREBASE_CREDENTIALS_PATH: Path | None = None
     FIREBASE_CREDENTIALS_JSON: str | None = None
     FIREBASE_PROJECT_ID: str | None = None
+
+    # --- Firebase Storage (image uploads via signed URLs) ---------------------
+    # When auth and storage live in different Firebase projects, set the
+    # FIREBASE_STORAGE_CREDENTIALS_* vars below. If omitted, the auth service
+    # account is reused (single-project setup).
+    FIREBASE_STORAGE_CREDENTIALS_SOURCE: FirebaseCredentialsSource | None = None
+    FIREBASE_STORAGE_CREDENTIALS_PATH: Path | None = None
+    FIREBASE_STORAGE_CREDENTIALS_JSON: str | None = None
+    FIREBASE_STORAGE_PROJECT_ID: str | None = None
     FIREBASE_STORAGE_BUCKET: str | None = None
+
     # Tolerate small clock drift between this host and Google/Firebase (seconds).
     FIREBASE_CLOCK_SKEW_SECONDS: int = 60
 

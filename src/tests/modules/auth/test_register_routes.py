@@ -267,6 +267,47 @@ async def test_login_succeeds_for_verified_user() -> None:
     service._redis.delete.assert_awaited_once_with("auth:revoked:fb-uid-1")
 
 
+async def test_admin_login_rejects_non_admin_role() -> None:
+    service, repo, _verifications, fb = _build_service()
+    fb.verify_id_token = AsyncMock(return_value={"uid": "fb-uid-1", "email": "a@b.com", "role": "viewer"})
+    service._redis.delete = AsyncMock()
+    service._redis.set = AsyncMock()
+    repo.upsert_from_firebase = AsyncMock(
+        return_value=UserDocument(
+            firebase_uid="fb-uid-1",
+            email="a@b.com",
+            is_verified=True,
+            is_active=True,
+            role=Role.VIEWER,
+        )
+    )
+
+    with pytest.raises(ForbiddenError) as exc:
+        await service.admin_login_with_id_token("a" * 20)
+    assert exc.value.code == "admin_required"
+
+
+async def test_admin_login_succeeds_for_admin_role() -> None:
+    service, repo, _verifications, fb = _build_service()
+    fb.verify_id_token = AsyncMock(
+        return_value={"uid": "fb-uid-1", "email": "admin@b.com", "role": "admin"}
+    )
+    service._redis.delete = AsyncMock()
+    service._redis.set = AsyncMock()
+    repo.upsert_from_firebase = AsyncMock(
+        return_value=UserDocument(
+            firebase_uid="fb-uid-1",
+            email="admin@b.com",
+            is_verified=True,
+            is_active=True,
+            role=Role.ADMIN,
+        )
+    )
+
+    result = await service.admin_login_with_id_token("a" * 20)
+    assert result.user.role == Role.ADMIN
+
+
 # ------------------------------------------------------------------- routes
 async def test_admin_create_user_requires_authentication(client: AsyncClient) -> None:
     response = await client.post(
@@ -279,6 +320,63 @@ async def test_admin_create_user_requires_authentication(client: AsyncClient) ->
     )
     assert response.status_code == 401
     assert response.json()["code"] == "missing_token"
+
+
+async def test_admin_create_user_rejects_non_admin(
+    app: FastAPI, client: AsyncClient
+) -> None:
+    from src.shared.constants.roles import Role
+    from src.shared.dependencies.auth import CurrentUser, get_current_user
+
+    async def _override() -> CurrentUser:
+        return CurrentUser(
+            uid="firebase-uid-viewer",
+            email="viewer@example.com",
+            role=Role.VIEWER,
+            email_verified=True,
+        )
+
+    app.dependency_overrides[get_current_user] = _override
+    try:
+        response = await client.post(
+            "/api/v1/auth/admin/users",
+            json={
+                "full_name": "Carol Admin",
+                "email": "carol@example.com",
+                "password": "supersecret",
+            },
+            headers={"Authorization": "Bearer fake-token"},
+        )
+        assert response.status_code == 403
+        assert response.json()["code"] == "role_required"
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_admin_login_route_rejects_non_admin(
+    app: FastAPI, client: AsyncClient
+) -> None:
+    from src.modules.auth.controller import AuthController
+    from src.modules.auth.routes import _build_controller
+    from src.core.exceptions import ForbiddenError
+
+    class _StubController(AuthController):
+        def __init__(self) -> None:
+            pass
+
+        async def admin_login(self, payload):  # type: ignore[override]
+            raise ForbiddenError("Admin access required.", code="admin_required")
+
+    app.dependency_overrides[_build_controller] = lambda: _StubController()
+    try:
+        response = await client.post(
+            "/api/v1/auth/admin/login",
+            json={"id_token": "a" * 20},
+        )
+        assert response.status_code == 403
+        assert response.json()["code"] == "admin_required"
+    finally:
+        app.dependency_overrides.clear()
 
 
 async def test_register_route_rejects_password_mismatch(client: AsyncClient) -> None:

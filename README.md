@@ -114,7 +114,7 @@ econmesh-api/
 - Python **3.14**
 - Poetry **2.x**
 - (For Docker path) Docker Desktop / Engine 24+ and Compose v2
-- A Firebase project + service-account JSON
+- A Firebase **Auth** project + service-account JSON (and optionally a separate **Storage** project — see [docs/FIREBASE.md](docs/FIREBASE.md))
 
 ### 2. Local (no Docker)
 
@@ -130,7 +130,9 @@ Open <http://localhost:8000/docs> for the interactive OpenAPI UI.
 
 ```bash
 cp .env.example .env
-mkdir -p secrets && cp /path/to/serviceAccountKey.json secrets/firebase.json
+mkdir -p secrets
+cp /path/to/auth-serviceAccount.json secrets/firebase-auth.json
+cp /path/to/storage-serviceAccount.json secrets/firebase-storage.json   # se projetos separados
 docker compose up --build
 ```
 

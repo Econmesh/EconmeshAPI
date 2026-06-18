@@ -41,6 +41,12 @@ services:
         sync: false
       - key: FIREBASE_PROJECT_ID
         sync: false
+      - key: FIREBASE_STORAGE_CREDENTIALS_SOURCE
+        value: json
+      - key: FIREBASE_STORAGE_CREDENTIALS_JSON
+        sync: false
+      - key: FIREBASE_STORAGE_PROJECT_ID
+        sync: false
       - key: FIREBASE_STORAGE_BUCKET
         sync: false
       - key: CORS_ORIGINS
