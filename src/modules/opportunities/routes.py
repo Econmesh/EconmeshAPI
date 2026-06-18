@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 
 from src.modules.auth.repository import AuthRepository
 from src.modules.companies.repository import CompaniesRepository
@@ -23,6 +23,7 @@ from src.modules.opportunities.schema import (
 from src.modules.opportunities.service import OpportunitiesService
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
+from src.shared.schemas.responses import StorageUploadResponse
 
 if TYPE_CHECKING:
     from pymongo.asynchronous.database import AsyncDatabase
@@ -83,6 +84,20 @@ async def presign_opportunity_image(
     current_user: CurrentUserDep,
 ) -> OpportunityImagePresignResponse:
     return await controller.presign_image(payload, current_user)
+
+
+@router.post(
+    "/images/upload",
+    response_model=StorageUploadResponse,
+    summary="Upload an opportunity image via the API (avoids browser CORS to Storage).",
+    status_code=status.HTTP_200_OK,
+)
+async def upload_opportunity_image(
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+    file: UploadFile = File(...),
+) -> StorageUploadResponse:
+    return await controller.upload_image(file, current_user)
 
 
 @router.get(

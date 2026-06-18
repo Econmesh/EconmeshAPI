@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import UUID
 
+from fastapi import UploadFile
+
 from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from src.core.firebase import firebase
 from src.modules.auth.repository import AuthRepository
@@ -22,6 +24,8 @@ from src.modules.opportunities.schema import (
     OpportunityResponse,
     OpportunityUpdate,
 )
+from src.shared.schemas.responses import StorageUploadResponse
+from src.shared.utils.image_upload import extension_from_filename, upload_image_file
 from src.shared.utils.storage_keys import image_storage_key
 from src.shared.utils.time import utcnow
 
@@ -242,6 +246,19 @@ class OpportunitiesService:
             public_url=public_url,
             expires_at=expires_at,
         )
+
+    async def upload_image(
+        self, file: UploadFile, *, firebase_uid: str
+    ) -> StorageUploadResponse:
+        owner_user_id = await self._resolve_user_id(firebase_uid)
+        extension = extension_from_filename(file.filename or "image.bin")
+        storage_key = image_storage_key(owner_user_id, extension)
+        public_url = await upload_image_file(
+            file,
+            allowed_types=_ALLOWED_IMAGE_TYPES,
+            storage_key=storage_key,
+        )
+        return StorageUploadResponse(storage_key=storage_key, public_url=public_url)
 
 
 __all__ = ["OpportunitiesService"]

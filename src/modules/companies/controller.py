@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from fastapi import UploadFile
+
 from src.modules.companies.schema import (
     CompanyCreate,
     CompanyResponse,
@@ -13,6 +15,7 @@ from src.modules.companies.schema import (
 )
 from src.modules.companies.service import CompaniesService
 from src.shared.dependencies.auth import CurrentUser
+from src.shared.schemas.responses import StorageUploadResponse
 
 
 class CompaniesController:
@@ -49,6 +52,13 @@ class CompaniesController:
     ) -> LogoPresignResponse:
         return await self._service.presign_logo(
             payload, firebase_uid=current_user.uid
+        )
+
+    async def upload_logo(
+        self, file: UploadFile, current_user: CurrentUser
+    ) -> StorageUploadResponse:
+        return await self._service.upload_logo(
+            file, firebase_uid=current_user.uid
         )
 
 

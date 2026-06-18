@@ -7,12 +7,13 @@ O Econmesh usa **dois projetos Firebase** distintos:
 | **Auth** | Login, registro, verificação de ID token, custom claims (`role`) | API + apps web (Next.js) |
 | **Storage** | Upload de imagens (oportunidades, logos, avatares) | API (presigned URLs) |
 
-O frontend **não** envia arquivos diretamente ao Firebase Client SDK. O fluxo é:
+O frontend **não** envia arquivos diretamente ao Firebase Client SDK. O fluxo recomendado é:
 
-1. App chama a API (`POST .../presign`) com o token de auth.
-2. API gera URL assinada no projeto **Storage**.
-3. App faz `PUT` do arquivo nessa URL.
-4. A URL pública (`firebasestorage.googleapis.com`) é salva no MongoDB.
+1. App envia o arquivo para a API (`POST .../upload`) com `multipart/form-data`.
+2. API faz upload no projeto **Storage** (server-side).
+3. A URL pública (`firebasestorage.googleapis.com`) é retornada e salva no MongoDB.
+
+Alternativa legada (presign + PUT direto no browser): exige CORS configurado no bucket GCS.
 
 ---
 
@@ -124,11 +125,11 @@ Adicione `secrets/` ao `.gitignore` (já ignorado se contiver `*.json` sensível
 
 ## 4. Endpoints que usam Storage
 
-| Recurso | Endpoint presign |
-| ------- | ---------------- |
-| Avatar do usuário | `POST /api/v1/users/avatar/presign` |
-| Logo da empresa | `POST /api/v1/companies/logo/presign` |
-| Imagens de oportunidade | `POST /api/v1/opportunities/images/presign` |
+| Recurso | Endpoint presign (legado) | Endpoint upload (recomendado) |
+| ------- | ------------------------- | ----------------------------- |
+| Avatar do usuário | `POST /api/v1/users/avatar/presign` | `POST /api/v1/users/avatar/upload` |
+| Logo da empresa | `POST /api/v1/companies/logo/presign` | `POST /api/v1/companies/logo/upload` |
+| Imagens de oportunidade | `POST /api/v1/opportunities/images/presign` | `POST /api/v1/opportunities/images/upload` |
 
 Chaves no bucket seguem o padrão (pasta raiz ``econmesh/``):
 
@@ -158,4 +159,5 @@ Chaves no bucket seguem o padrão (pasta raiz ``econmesh/``):
 | `Firebase Storage is not configured` | `FIREBASE_STORAGE_BUCKET` ausente |
 | `Unable to generate upload URL` | Credenciais de storage incorretas ou service account sem permissão no bucket |
 | Upload PUT retorna 403 | Bucket/regras do Storage ou `Content-Type` diferente do presign |
-| Imagem não carrega no browser | URL pública bloqueada por regras do Storage; ajuste regras ou use token de download |
+| `Failed to fetch` no upload no browser | CORS do bucket GCS bloqueando PUT direto — use os endpoints `*/upload` da API (recomendado) ou configure CORS no bucket |
+| Imagem não carrega no browser | URL sem token de download em objeto privado — novos uploads via API incluem `token=` automaticamente; reenvie a imagem ou ajuste regras do Storage |

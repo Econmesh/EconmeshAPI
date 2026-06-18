@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -320,12 +321,18 @@ class FirebaseAdmin:
             )
         return bucket
 
-    def _public_storage_url(self, storage_key: str) -> str:
+    def _public_storage_url(self, storage_key: str, *, token: str | None = None) -> str:
         bucket = self._storage_bucket_name()
         encoded = quote(storage_key, safe="")
-        return (
+        url = (
             f"https://firebasestorage.googleapis.com/v0/b/{bucket}/o/{encoded}?alt=media"
         )
+        if token:
+            return f"{url}&token={token}"
+        return url
+
+    def _new_download_token(self) -> str:
+        return str(uuid.uuid4())
 
     async def presign_storage_upload(
         self,
@@ -358,6 +365,35 @@ class FirebaseAdmin:
             ) from exc
 
         return upload_url, self._public_storage_url(storage_key)
+
+    async def upload_storage_bytes(
+        self,
+        storage_key: str,
+        data: bytes,
+        *,
+        content_type: str,
+    ) -> str:
+        """Upload bytes to Storage and return the public download URL."""
+        bucket_name = self._storage_bucket_name()
+        storage_app = self._require_storage_app()
+        download_token = self._new_download_token()
+
+        def _upload() -> None:
+            bucket = storage.bucket(bucket_name, app=storage_app)
+            blob = bucket.blob(storage_key)
+            blob.metadata = {"firebaseStorageDownloadTokens": download_token}
+            blob.upload_from_string(data, content_type=content_type)
+
+        try:
+            await asyncio.to_thread(_upload)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("firebase_storage_upload_failed")
+            raise ExternalServiceError(
+                "Unable to upload file.",
+                code="storage_upload_failed",
+            ) from exc
+
+        return self._public_storage_url(storage_key, token=download_token)
 
 
 firebase = FirebaseAdmin()

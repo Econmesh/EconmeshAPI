@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from fastapi import UploadFile
+
 from src.modules.opportunities.schema import (
     OpportunityCreate,
     OpportunityImagePresignRequest,
@@ -15,6 +17,7 @@ from src.modules.opportunities.schema import (
 )
 from src.modules.opportunities.service import OpportunitiesService
 from src.shared.dependencies.auth import CurrentUser
+from src.shared.schemas.responses import StorageUploadResponse
 
 
 class OpportunitiesController:
@@ -66,6 +69,13 @@ class OpportunitiesController:
     ) -> OpportunityImagePresignResponse:
         return await self._service.presign_image(
             payload, firebase_uid=current_user.uid
+        )
+
+    async def upload_image(
+        self, file: UploadFile, current_user: CurrentUser
+    ) -> StorageUploadResponse:
+        return await self._service.upload_image(
+            file, firebase_uid=current_user.uid
         )
 
 

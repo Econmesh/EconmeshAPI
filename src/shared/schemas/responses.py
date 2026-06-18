@@ -32,4 +32,11 @@ class MessageResponse(APIModel):
     data: dict[str, Any] | None = None
 
 
-__all__ = ["ErrorResponse", "HealthResponse", "MessageResponse"]
+class StorageUploadResponse(APIModel):
+    """Result of a server-side upload to Firebase Storage."""
+
+    storage_key: str
+    public_url: str
+
+
+__all__ = ["ErrorResponse", "HealthResponse", "MessageResponse", "StorageUploadResponse"]

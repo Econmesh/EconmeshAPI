@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import timedelta
 from uuid import UUID
 
+from fastapi import UploadFile
+
 from src.core.exceptions import ConflictError, NotFoundError
 from src.core.firebase import firebase
 from src.modules.auth.model import UserDocument
@@ -18,6 +20,8 @@ from src.modules.users.schema import (
     UserProfileResponse,
     UserProfileUpdate,
 )
+from src.shared.schemas.responses import StorageUploadResponse
+from src.shared.utils.image_upload import extension_from_filename, upload_image_file
 from src.shared.utils.storage_keys import avatar_storage_key
 from src.shared.utils.time import utcnow
 
@@ -184,6 +188,32 @@ class UsersService:
             public_url=public_url,
             expires_at=expires_at,
         )
+
+    async def upload_avatar(
+        self, file: UploadFile, *, firebase_uid: str
+    ) -> StorageUploadResponse:
+        user = await self._resolve_user(firebase_uid)
+        extension = extension_from_filename(file.filename or "avatar.bin")
+        storage_key = avatar_storage_key(user.id, extension)
+        public_url = await upload_image_file(
+            file,
+            allowed_types=_ALLOWED_AVATAR_TYPES,
+            storage_key=storage_key,
+        )
+
+        profile_patch = {
+            "picture_url": public_url,
+            "picture_storage_key": storage_key,
+        }
+        await firebase.update_user(user.firebase_uid, photo_url=public_url)
+        updated_user = await self._auth_repo.update_profile(
+            user.id, {"picture": public_url}
+        )
+        if updated_user is not None:
+            user = updated_user
+        await self._repo.upsert_for_user(user.id, profile_patch)
+
+        return StorageUploadResponse(storage_key=storage_key, public_url=public_url)
 
 
 __all__ = ["UsersService"]

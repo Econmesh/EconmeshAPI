@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 
 from src.modules.auth.repository import AuthRepository
 from src.modules.users.controller import UsersController
@@ -18,6 +18,7 @@ from src.modules.users.schema import (
 from src.modules.users.service import UsersService
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
+from src.shared.schemas.responses import StorageUploadResponse
 
 if TYPE_CHECKING:
     from pymongo.asynchronous.database import AsyncDatabase
@@ -76,6 +77,20 @@ async def presign_avatar(
     current_user: CurrentUserDep,
 ) -> AvatarPresignResponse:
     return await controller.presign_avatar(payload, current_user)
+
+
+@router.post(
+    "/avatar/upload",
+    response_model=StorageUploadResponse,
+    summary="Upload a profile photo via the API (avoids browser CORS to Storage).",
+    status_code=status.HTTP_200_OK,
+)
+async def upload_avatar(
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+    file: UploadFile = File(...),
+) -> StorageUploadResponse:
+    return await controller.upload_avatar(file, current_user)
 
 
 __all__ = ["router"]

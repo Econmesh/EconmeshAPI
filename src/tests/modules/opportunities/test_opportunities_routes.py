@@ -22,6 +22,7 @@ from src.modules.opportunities.schema import (
     OpportunityResponse,
 )
 from src.shared.dependencies.auth import CurrentUser, get_current_user
+from src.shared.schemas.responses import StorageUploadResponse
 from src.shared.utils.ids import new_uuid
 from src.shared.utils.time import utcnow
 
@@ -220,5 +221,38 @@ async def test_presign_image_returns_upload_url(
         body = response.json()
         assert body["storage_key"] == "econmesh/images/test/photo.jpg"
         assert "upload_url" in body
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_upload_image_returns_storage_key(
+    app: FastAPI, client: AsyncClient
+) -> None:
+    fake_user = CurrentUser(uid="firebase-uid-123")
+
+    class _StubController(OpportunitiesController):
+        def __init__(self) -> None:
+            pass
+
+        async def upload_image(self, file, current_user: CurrentUser) -> StorageUploadResponse:
+            assert current_user.uid == fake_user.uid
+            assert file.filename == "photo.jpg"
+            return StorageUploadResponse(
+                storage_key="econmesh/images/test/photo.jpg",
+                public_url="https://storage.example/photo.jpg",
+            )
+
+    app.dependency_overrides[get_current_user] = lambda: fake_user
+    app.dependency_overrides[_build_controller] = lambda: _StubController()
+    try:
+        response = await client.post(
+            "/api/v1/opportunities/images/upload",
+            headers={"Authorization": "Bearer fake-token"},
+            files={"file": ("photo.jpg", b"fake-image-bytes", "image/jpeg")},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["storage_key"] == "econmesh/images/test/photo.jpg"
+        assert body["public_url"] == "https://storage.example/photo.jpg"
     finally:
         app.dependency_overrides.clear()

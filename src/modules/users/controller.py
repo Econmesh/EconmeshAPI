@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from fastapi import UploadFile
+
 from src.modules.users.schema import (
     AvatarPresignRequest,
     AvatarPresignResponse,
@@ -10,6 +12,7 @@ from src.modules.users.schema import (
 )
 from src.modules.users.service import UsersService
 from src.shared.dependencies.auth import CurrentUser
+from src.shared.schemas.responses import StorageUploadResponse
 
 
 class UsersController:
@@ -31,6 +34,13 @@ class UsersController:
     ) -> AvatarPresignResponse:
         return await self._service.presign_avatar(
             payload, firebase_uid=current_user.uid
+        )
+
+    async def upload_avatar(
+        self, file: UploadFile, current_user: CurrentUser
+    ) -> StorageUploadResponse:
+        return await self._service.upload_avatar(
+            file, firebase_uid=current_user.uid
         )
 
 
