@@ -53,6 +53,25 @@ class AuthRepository:
         doc = await self._collection.find_one({"_id": user_id})
         return UserDocument.model_validate(doc) if doc else None
 
+    async def get_by_ids(
+        self, user_ids: list[UUID], *, active_only: bool = True
+    ) -> list[UserDocument]:
+        if not user_ids:
+            return []
+        query: dict[str, object] = {"_id": {"$in": user_ids}}
+        if active_only:
+            query["is_active"] = True
+        cursor = self._collection.find(query)
+        docs = await cursor.to_list(length=len(user_ids))
+        return [UserDocument.model_validate(doc) for doc in docs]
+
+    async def list_active_user_ids(self) -> list[UUID]:
+        cursor = self._collection.find(
+            {"is_active": True}, projection={"_id": 1}
+        )
+        docs = await cursor.to_list(length=None)
+        return [doc["_id"] for doc in docs]
+
     async def get_by_email(self, email: str) -> UserDocument | None:
         doc = await self._collection.find_one({"email": email})
         return UserDocument.model_validate(doc) if doc else None

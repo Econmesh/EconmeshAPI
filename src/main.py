@@ -36,6 +36,7 @@ from src.modules.circularity import router as circularity_router
 from src.modules.companies import router as companies_router
 from src.modules.files import router as files_router
 from src.modules.opportunities import router as opportunities_router
+from src.modules.notifications import router as notifications_router
 from src.modules.users import router as users_router
 from src.shared.middleware import (
     AccessLogMiddleware,
@@ -151,6 +152,7 @@ def _register_routers(app: FastAPI, settings: Settings) -> None:
     api_v1.include_router(users_router)
     api_v1.include_router(companies_router)
     api_v1.include_router(opportunities_router)
+    api_v1.include_router(notifications_router)
     api_v1.include_router(circularity_router)
     api_v1.include_router(files_router)
     api_v1.include_router(blockchain_router)

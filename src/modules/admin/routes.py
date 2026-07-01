@@ -32,6 +32,24 @@ from src.modules.opportunities.schema import (
     OpportunityUpdate,
 )
 from src.modules.opportunities.service import OpportunitiesService
+from src.modules.notifications.deps import (
+    build_admin_notification_campaigns_controller,
+    build_admin_notification_groups_controller,
+)
+from src.modules.notifications.controller import (
+    AdminNotificationCampaignsController,
+    AdminNotificationGroupsController,
+)
+from src.modules.notifications.schema import (
+    NotificationCampaignCreate,
+    NotificationCampaignListResponse,
+    NotificationCampaignResponse,
+    NotificationGroupCreate,
+    NotificationGroupListResponse,
+    NotificationGroupResponse,
+    NotificationGroupUpdate,
+)
+from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.constants.roles import Role
 from src.shared.dependencies.db import get_db
 from src.shared.dependencies.rbac import require_role
@@ -250,6 +268,175 @@ async def delete_opportunity(
 ) -> MessageResponse:
     await controller.delete_opportunity(opportunity_id)
     return MessageResponse(message="Opportunity deleted successfully.")
+
+
+# ---------------------------------------------------------- notifications
+def _build_notification_groups_controller(
+    db: Annotated["AsyncDatabase", Depends(get_db)],
+) -> AdminNotificationGroupsController:
+    return build_admin_notification_groups_controller(db)
+
+
+def _build_notification_campaigns_controller(
+    db: Annotated["AsyncDatabase", Depends(get_db)],
+    redis_client: Annotated["Redis", Depends(get_redis)],
+) -> AdminNotificationCampaignsController:
+    return build_admin_notification_campaigns_controller(db, redis_client)
+
+
+NotificationGroupsControllerDep = Annotated[
+    AdminNotificationGroupsController, Depends(_build_notification_groups_controller)
+]
+NotificationCampaignsControllerDep = Annotated[
+    AdminNotificationCampaignsController,
+    Depends(_build_notification_campaigns_controller),
+]
+
+
+async def _admin_user_id(
+    db: Annotated["AsyncDatabase", Depends(get_db)],
+    current_user: CurrentUserDep,
+) -> UUID:
+    auth_repo = AuthRepository(db)
+    user = await auth_repo.get_by_firebase_uid(current_user.uid)
+    if user is None:
+        from src.core.exceptions import NotFoundError
+
+        raise NotFoundError("User not found.")
+    return user.id
+
+
+AdminUserIdDep = Annotated[UUID, Depends(_admin_user_id)]
+
+
+@router.get(
+    "/notification-groups",
+    response_model=NotificationGroupListResponse,
+    summary="List notification groups.",
+)
+async def list_notification_groups(
+    controller: NotificationGroupsControllerDep,
+    pagination: Annotated[PaginationParams, Depends(PaginationParams.as_query)],
+) -> NotificationGroupListResponse:
+    return await controller.list(
+        page=pagination.page, page_size=pagination.page_size
+    )
+
+
+@router.post(
+    "/notification-groups",
+    response_model=NotificationGroupResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a notification group.",
+)
+async def create_notification_group(
+    payload: NotificationGroupCreate,
+    controller: NotificationGroupsControllerDep,
+    admin_id: AdminUserIdDep,
+) -> NotificationGroupResponse:
+    return await controller.create(payload, created_by=admin_id)
+
+
+@router.get(
+    "/notification-groups/{group_id}",
+    response_model=NotificationGroupResponse,
+    summary="Get a notification group.",
+)
+async def get_notification_group(
+    group_id: UUID,
+    controller: NotificationGroupsControllerDep,
+) -> NotificationGroupResponse:
+    return await controller.get(group_id)
+
+
+@router.patch(
+    "/notification-groups/{group_id}",
+    response_model=NotificationGroupResponse,
+    summary="Update a notification group.",
+)
+async def update_notification_group(
+    group_id: UUID,
+    payload: NotificationGroupUpdate,
+    controller: NotificationGroupsControllerDep,
+) -> NotificationGroupResponse:
+    return await controller.update(group_id, payload)
+
+
+@router.delete(
+    "/notification-groups/{group_id}",
+    response_model=MessageResponse,
+    summary="Delete a notification group.",
+)
+async def delete_notification_group(
+    group_id: UUID,
+    controller: NotificationGroupsControllerDep,
+) -> MessageResponse:
+    await controller.delete(group_id)
+    return MessageResponse(message="Notification group deleted successfully.")
+
+
+@router.get(
+    "/notifications",
+    response_model=NotificationCampaignListResponse,
+    summary="List notification campaigns.",
+)
+async def list_notification_campaigns(
+    controller: NotificationCampaignsControllerDep,
+    pagination: Annotated[PaginationParams, Depends(PaginationParams.as_query)],
+) -> NotificationCampaignListResponse:
+    return await controller.list(
+        page=pagination.page, page_size=pagination.page_size
+    )
+
+
+@router.post(
+    "/notifications",
+    response_model=NotificationCampaignResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create and optionally send a notification campaign.",
+)
+async def create_notification_campaign(
+    payload: NotificationCampaignCreate,
+    controller: NotificationCampaignsControllerDep,
+    current_user: CurrentUserDep,
+) -> NotificationCampaignResponse:
+    return await controller.create(payload, current_user)
+
+
+@router.get(
+    "/notifications/{campaign_id}",
+    response_model=NotificationCampaignResponse,
+    summary="Get a notification campaign.",
+)
+async def get_notification_campaign(
+    campaign_id: UUID,
+    controller: NotificationCampaignsControllerDep,
+) -> NotificationCampaignResponse:
+    return await controller.get(campaign_id)
+
+
+@router.post(
+    "/notifications/{campaign_id}/cancel",
+    response_model=NotificationCampaignResponse,
+    summary="Cancel a scheduled notification campaign.",
+)
+async def cancel_notification_campaign(
+    campaign_id: UUID,
+    controller: NotificationCampaignsControllerDep,
+) -> NotificationCampaignResponse:
+    return await controller.cancel(campaign_id)
+
+
+@router.post(
+    "/notifications/{campaign_id}/send-now",
+    response_model=NotificationCampaignResponse,
+    summary="Send a notification campaign immediately.",
+)
+async def send_notification_campaign_now(
+    campaign_id: UUID,
+    controller: NotificationCampaignsControllerDep,
+) -> NotificationCampaignResponse:
+    return await controller.send_now(campaign_id)
 
 
 __all__ = ["router"]

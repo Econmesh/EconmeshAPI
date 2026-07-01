@@ -25,6 +25,10 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
+        # SSE streams are long-lived; a global request timeout would cut them off.
+        if request.url.path.endswith("/notifications/stream"):
+            return await call_next(request)
+
         try:
             return await asyncio.wait_for(call_next(request), timeout=self._timeout)
         except TimeoutError:

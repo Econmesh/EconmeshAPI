@@ -111,6 +111,21 @@ class EmailSender:
         )
         await self.send(to=to, subject=subject, text_body=text_body, html_body=html_body)
 
+    async def send_notification(self, *, to: str, subject: str, body: str) -> None:
+        """Send a platform notification email."""
+        safe_subject = escape(subject)
+        safe_body = escape(body).replace("\n", "<br>")
+        text_body = f"{subject}\n\n{body}"
+        html_body = (
+            "<div style=\"font-family:sans-serif;max-width:600px\">"
+            f"<h2 style=\"color:#0f766e\">{safe_subject}</h2>"
+            f"<p>{safe_body}</p>"
+            "<p style=\"color:#666;font-size:12px\">"
+            "Esta é uma notificação da plataforma Econmesh.</p>"
+            "</div>"
+        )
+        await self.send(to=to, subject=subject, text_body=text_body, html_body=html_body)
+
 
 email_sender = EmailSender()
 """Process-wide singleton."""
