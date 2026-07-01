@@ -126,6 +126,33 @@ class EmailSender:
         )
         await self.send(to=to, subject=subject, text_body=text_body, html_body=html_body)
 
+    async def send_support_notification(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        action_url: str,
+        action_label: str = "Ver chamado",
+    ) -> None:
+        """Send a support ticket notification email."""
+        safe_subject = escape(subject)
+        safe_body = escape(body).replace("\n", "<br>")
+        safe_url = escape(action_url, quote=True)
+        text_body = f"{subject}\n\n{body}\n\n{action_label}: {action_url}"
+        html_body = (
+            "<div style=\"font-family:sans-serif;max-width:600px\">"
+            f"<h2 style=\"color:#0f766e\">{safe_subject}</h2>"
+            f"<p>{safe_body}</p>"
+            f'<p><a href="{safe_url}" '
+            'style="display:inline-block;padding:10px 18px;background:#0f766e;'
+            f'color:#fff;text-decoration:none;border-radius:6px">{escape(action_label)}</a></p>'
+            "<p style=\"color:#666;font-size:12px\">"
+            "Esta é uma notificação de suporte da plataforma Econmesh.</p>"
+            "</div>"
+        )
+        await self.send(to=to, subject=subject, text_body=text_body, html_body=html_body)
+
 
 email_sender = EmailSender()
 """Process-wide singleton."""

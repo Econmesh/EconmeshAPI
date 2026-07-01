@@ -20,6 +20,7 @@ from src.modules.notifications.repository import (
     UserNotificationsRepository,
 )
 from src.modules.opportunities.repository import OpportunitiesRepository
+from src.modules.support.repository import SupportMessagesRepository, SupportTicketsRepository
 from src.modules.users.repository import UsersRepository
 
 logger = get_logger(__name__)
@@ -38,6 +39,8 @@ async def _main() -> None:
         await NotificationGroupsRepository(mongo.db).ensure_indexes()
         await NotificationCampaignsRepository(mongo.db).ensure_indexes()
         await UserNotificationsRepository(mongo.db).ensure_indexes()
+        await SupportTicketsRepository(mongo.db).ensure_indexes()
+        await SupportMessagesRepository(mongo.db).ensure_indexes()
         await UsersRepository(mongo.db).ensure_indexes()
         logger.info("indexes_done")
     finally:

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+from collections.abc import AsyncIterator
+from contextlib import suppress
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import StreamingResponse
 
 from src.modules.admin.controller import AdminController
 from src.modules.admin.schema import (
@@ -49,6 +54,21 @@ from src.modules.notifications.schema import (
     NotificationGroupResponse,
     NotificationGroupUpdate,
 )
+from src.modules.support.controller import AdminSupportController
+from src.modules.support.deps import build_admin_support_controller, build_support_service
+from src.modules.support.schema import (
+    AdminSupportTicketListParams,
+    SupportInternalNoteCreate,
+    SupportMessageCreate,
+    SupportMessageListResponse,
+    SupportMessageResponse,
+    SupportTicketAssign,
+    SupportTicketDetailResponse,
+    SupportTicketListResponse,
+    SupportTicketResponse,
+)
+from src.infrastructure.realtime.presence import PresenceService
+from src.infrastructure.realtime.support_pubsub import subscribe_support_admin
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.constants.roles import Role
 from src.shared.dependencies.db import get_db
@@ -437,6 +457,226 @@ async def send_notification_campaign_now(
     controller: NotificationCampaignsControllerDep,
 ) -> NotificationCampaignResponse:
     return await controller.send_now(campaign_id)
+
+
+# ------------------------------------------------------------------ support
+_SUPPORT_HEARTBEAT_SECONDS = 30
+
+
+def _build_support_controller(
+    db: Annotated["AsyncDatabase", Depends(get_db)],
+    redis_client: Annotated["Redis", Depends(get_redis)],
+) -> AdminSupportController:
+    return build_admin_support_controller(db, redis_client)
+
+
+SupportControllerDep = Annotated[
+    AdminSupportController, Depends(_build_support_controller)
+]
+
+
+async def _support_admin_event_stream(
+    redis_client: Redis,
+    firebase_uid: str,
+    auth_repo: AuthRepository,
+    presence: PresenceService,
+) -> AsyncIterator[str]:
+    user = await auth_repo.get_by_firebase_uid(firebase_uid)
+    if user is None:
+        yield f"event: error\ndata: {json.dumps({'message': 'User not found'})}\n\n"
+        return
+
+    await presence.touch(user.id)
+    async for event in subscribe_support_admin(redis_client):
+        if event.get("type") == "ping":
+            await presence.touch(user.id)
+            yield f"event: ping\ndata: {{}}\n\n"
+            continue
+        event_type = event.get("type", "message")
+        yield f"event: {event_type}\ndata: {json.dumps(event.get('data', {}))}\n\n"
+
+
+@router.get(
+    "/support/tickets",
+    response_model=SupportTicketListResponse,
+    summary="List all support tickets.",
+)
+async def list_support_tickets(
+    controller: SupportControllerDep,
+    params: Annotated[
+        AdminSupportTicketListParams, Depends(AdminSupportTicketListParams.as_query)
+    ],
+) -> SupportTicketListResponse:
+    return await controller.list_tickets(params)
+
+
+@router.get(
+    "/support/tickets/{ticket_id}",
+    response_model=SupportTicketDetailResponse,
+    summary="Get support ticket detail.",
+)
+async def get_support_ticket(
+    ticket_id: UUID,
+    controller: SupportControllerDep,
+) -> SupportTicketDetailResponse:
+    return await controller.get_ticket(ticket_id)
+
+
+@router.get(
+    "/support/tickets/{ticket_id}/messages",
+    response_model=SupportMessageListResponse,
+    summary="List all messages including internal notes.",
+)
+async def list_support_messages(
+    ticket_id: UUID,
+    controller: SupportControllerDep,
+) -> SupportMessageListResponse:
+    return await controller.list_messages(ticket_id)
+
+
+@router.post(
+    "/support/tickets/{ticket_id}/messages",
+    response_model=SupportMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Reply to the user.",
+)
+async def add_support_reply(
+    ticket_id: UUID,
+    payload: SupportMessageCreate,
+    controller: SupportControllerDep,
+    current_user: CurrentUserDep,
+) -> SupportMessageResponse:
+    return await controller.add_reply(ticket_id, payload, current_user)
+
+
+@router.post(
+    "/support/tickets/{ticket_id}/notes",
+    response_model=SupportMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add an internal note (admins only).",
+)
+async def add_support_note(
+    ticket_id: UUID,
+    payload: SupportInternalNoteCreate,
+    controller: SupportControllerDep,
+    current_user: CurrentUserDep,
+) -> SupportMessageResponse:
+    return await controller.add_note(ticket_id, payload, current_user)
+
+
+@router.patch(
+    "/support/tickets/{ticket_id}/assign",
+    response_model=SupportTicketResponse,
+    summary="Assign ticket to an admin.",
+)
+async def assign_support_ticket(
+    ticket_id: UUID,
+    payload: SupportTicketAssign,
+    controller: SupportControllerDep,
+    current_user: CurrentUserDep,
+) -> SupportTicketResponse:
+    return await controller.assign(ticket_id, payload, current_user)
+
+
+@router.patch(
+    "/support/tickets/{ticket_id}/close",
+    response_model=SupportTicketResponse,
+    summary="Close a support ticket.",
+)
+async def close_support_ticket(
+    ticket_id: UUID,
+    controller: SupportControllerDep,
+    current_user: CurrentUserDep,
+) -> SupportTicketResponse:
+    return await controller.close(ticket_id, current_user)
+
+
+@router.patch(
+    "/support/tickets/{ticket_id}/reopen",
+    response_model=SupportTicketResponse,
+    summary="Reopen a closed support ticket.",
+)
+async def reopen_support_ticket(
+    ticket_id: UUID,
+    controller: SupportControllerDep,
+    current_user: CurrentUserDep,
+) -> SupportTicketResponse:
+    return await controller.reopen(ticket_id, current_user)
+
+
+@router.post(
+    "/support/tickets/{ticket_id}/messages/read",
+    response_model=SupportMessageListResponse,
+    summary="Mark user messages as read by admin.",
+)
+async def mark_support_messages_read_admin(
+    ticket_id: UUID,
+    controller: SupportControllerDep,
+) -> SupportMessageListResponse:
+    return await controller.mark_messages_read(ticket_id)
+
+
+@router.get(
+    "/support/stream",
+    summary="SSE stream of support events for admins.",
+    status_code=status.HTTP_200_OK,
+)
+async def support_admin_stream(
+    current_user: CurrentUserDep,
+    db: Annotated["AsyncDatabase", Depends(get_db)],
+    redis_client: Annotated["Redis", Depends(get_redis)],
+) -> StreamingResponse:
+    auth_repo = AuthRepository(db)
+    support_service = build_support_service(db, redis_client)
+
+    async def _stream_with_heartbeat() -> AsyncIterator[str]:
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        await support_service.touch_presence(firebase_uid=current_user.uid)
+
+        async def _producer() -> None:
+            try:
+                async for chunk in _support_admin_event_stream(
+                    redis_client,
+                    current_user.uid,
+                    auth_repo,
+                    PresenceService(redis_client),
+                ):
+                    await queue.put(chunk)
+            except asyncio.CancelledError:
+                await queue.put(None)
+                raise
+            except Exception:  # noqa: BLE001
+                await queue.put(None)
+
+        producer_task = asyncio.create_task(_producer())
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        queue.get(), timeout=_SUPPORT_HEARTBEAT_SECONDS
+                    )
+                except TimeoutError:
+                    await support_service.touch_presence(firebase_uid=current_user.uid)
+                    yield f"event: ping\ndata: {{}}\n\n"
+                    continue
+                if chunk is None:
+                    break
+                yield chunk
+        finally:
+            producer_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await producer_task
+            await support_service.clear_presence(firebase_uid=current_user.uid)
+
+    return StreamingResponse(
+        _stream_with_heartbeat(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 __all__ = ["router"]

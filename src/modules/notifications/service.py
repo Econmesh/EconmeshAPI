@@ -94,6 +94,8 @@ def _user_notification_to_response(
         read_at=doc.read_at,
         created_at=doc.created_at,
         campaign_id=doc.campaign_id,
+        kind=doc.kind,
+        metadata=doc.metadata,
     )
 
 
@@ -313,6 +315,8 @@ class NotificationsDeliveryService:
                     "created_at": created.created_at.isoformat(),
                     "read_at": None,
                     "campaign_id": str(campaign.id) if campaign.id else None,
+                    "kind": created.kind,
+                    "metadata": created.metadata,
                 },
             )
         return created

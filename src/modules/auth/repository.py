@@ -118,6 +118,13 @@ class AuthRepository:
             query["email"] = {"$regex": email, "$options": "i"}
         return await self._collection.count_documents(query)
 
+    async def list_admins(self) -> list[UserDocument]:
+        cursor = self._collection.find(
+            {"role": Role.ADMIN.value, "is_active": True}
+        )
+        docs = await cursor.to_list(length=None)
+        return [UserDocument.model_validate(doc) for doc in docs]
+
     # -------------------------------------------------------------- mutations
     async def create_user(self, user: UserDocument) -> UserDocument:
         """Insert a fully-formed user document (used by the registration flow)."""

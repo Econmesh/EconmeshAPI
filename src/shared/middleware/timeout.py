@@ -28,6 +28,10 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         # SSE streams are long-lived; a global request timeout would cut them off.
         if request.url.path.endswith("/notifications/stream"):
             return await call_next(request)
+        if request.url.path.endswith("/support/stream"):
+            return await call_next(request)
+        if "/admin/support/stream" in request.url.path:
+            return await call_next(request)
 
         try:
             return await asyncio.wait_for(call_next(request), timeout=self._timeout)

@@ -10,6 +10,7 @@ from pydantic import Field, model_validator
 from src.modules.notifications.model import (
     NotificationCampaignStatus,
     NotificationChannel,
+    NotificationKind,
     NotificationTargetType,
 )
 from src.shared.schemas.base import APIModel
@@ -108,6 +109,8 @@ class UserNotificationResponse(APIModel):
     read_at: datetime | None
     created_at: datetime
     campaign_id: UUID | None = None
+    kind: NotificationKind = NotificationKind.GENERAL
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class UserNotificationListResponse(APIModel):

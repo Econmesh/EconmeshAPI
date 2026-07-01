@@ -69,6 +69,11 @@ class NotificationCampaignDocument(DomainDocument):
     error_message: str | None = None
 
 
+class NotificationKind(StrEnum):
+    GENERAL = "general"
+    SUPPORT = "support"
+
+
 class UserNotificationDocument(DomainDocument):
     """Per-user inbox notification."""
 
@@ -80,9 +85,12 @@ class UserNotificationDocument(DomainDocument):
     body: str
     read_at: datetime | None = None
     channel: NotificationChannel = NotificationChannel.IN_APP
+    kind: NotificationKind = NotificationKind.GENERAL
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 __all__ = [
+    "NotificationKind",
     "NotificationCampaignDocument",
     "NotificationCampaignStats",
     "NotificationCampaignStatus",

@@ -112,6 +112,8 @@ class Settings(BaseSettings):
     # Base URL the confirmation link points to (frontend route that reads the
     # ``token`` query param and calls ``POST /auth/verify``).
     FRONTEND_VERIFY_URL: str = "https://app.econmesh.com/verify"
+    FRONTEND_APP_URL: str = "https://app.econmesh.com"
+    FRONTEND_ADMIN_URL: str = "https://admin.econmesh.com"
 
     # ------------------------------------------------------------------ helpers
     @field_validator("FIREBASE_CLOCK_SKEW_SECONDS")
