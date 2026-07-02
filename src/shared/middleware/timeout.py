@@ -28,9 +28,9 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         # SSE streams are long-lived; a global request timeout would cut them off.
         if request.url.path.endswith("/notifications/stream"):
             return await call_next(request)
-        if request.url.path.endswith("/support/stream"):
+        if request.url.path.endswith("/stream"):
             return await call_next(request)
-        if "/admin/support/stream" in request.url.path:
+        if "/stream" in request.url.path and "/support/" in request.url.path:
             return await call_next(request)
 
         try:

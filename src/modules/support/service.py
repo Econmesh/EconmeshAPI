@@ -59,9 +59,9 @@ def _message_event_payload(response: SupportMessageResponse) -> dict[str, object
         "id": str(response.id),
         "ticket_id": str(response.ticket_id),
         "author_id": str(response.author_id),
-        "author_role": response.author_role,
+        "author_role": str(response.author_role),
         "author_name": response.author_name,
-        "message_type": response.message_type,
+        "message_type": str(response.message_type),
         "body": response.body,
         "read_at": response.read_at.isoformat() if response.read_at else None,
         "created_at": response.created_at.isoformat(),
@@ -354,10 +354,22 @@ class SupportService:
         ticket = await self._tickets.get_by_id(ticket_id)
         if ticket is None:
             raise NotFoundError("Ticket not found.")
-        await self._messages.mark_read(
+        read_ids = await self._messages.mark_read(
             ticket.id,
             message_types=[SupportMessageType.USER_MESSAGE],
         )
+        if read_ids:
+            await self._publish(
+                user_id=ticket.user_id,
+                ticket_id=ticket.id,
+                to_admins=True,
+                event_type="messages_read",
+                data={
+                    "ticket_id": str(ticket.id),
+                    "message_ids": [str(mid) for mid in read_ids],
+                    "reader": "admin",
+                },
+            )
         return await self.list_admin_messages(ticket.id)
 
     # -------------------------------------------------------------- admin API

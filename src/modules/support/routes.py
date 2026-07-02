@@ -13,7 +13,10 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import StreamingResponse
 
 from src.infrastructure.realtime.presence import PresenceService
-from src.infrastructure.realtime.support_pubsub import subscribe_support_user
+from src.infrastructure.realtime.support_pubsub import (
+    subscribe_support_ticket,
+    subscribe_support_user,
+)
 from src.modules.auth.repository import AuthRepository
 from src.modules.support.controller import UserSupportController
 from src.modules.support.deps import build_support_service, build_user_support_controller
@@ -48,6 +51,18 @@ def _build_controller(
 
 
 ControllerDep = Annotated[UserSupportController, Depends(_build_controller)]
+
+
+async def _support_ticket_event_stream(
+    redis_client: Redis,
+    ticket_id: UUID,
+) -> AsyncIterator[str]:
+    async for event in subscribe_support_ticket(redis_client, ticket_id):
+        if event.get("type") == "ping":
+            yield f"event: ping\ndata: {{}}\n\n"
+            continue
+        event_type = event.get("type", "message")
+        yield f"event: {event_type}\ndata: {json.dumps(event.get('data', {}))}\n\n"
 
 
 async def _support_user_event_stream(
@@ -223,7 +238,62 @@ async def support_stream(
             producer_task.cancel()
             with suppress(asyncio.CancelledError):
                 await producer_task
-            await support_service.clear_presence(firebase_uid=current_user.uid)
+
+    return StreamingResponse(
+        _stream_with_heartbeat(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get(
+    "/tickets/{ticket_id}/stream",
+    summary="SSE stream of real-time events for a specific ticket.",
+    status_code=status.HTTP_200_OK,
+)
+async def support_ticket_stream(
+    ticket_id: UUID,
+    current_user: CurrentUserDep,
+    db: Annotated["AsyncDatabase", Depends(get_db)],
+    redis_client: Annotated["Redis", Depends(get_redis)],
+) -> StreamingResponse:
+    support_service = build_support_service(db, redis_client)
+    await support_service.get_user_ticket(ticket_id, firebase_uid=current_user.uid)
+
+    async def _stream_with_heartbeat() -> AsyncIterator[str]:
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def _producer() -> None:
+            try:
+                async for chunk in _support_ticket_event_stream(redis_client, ticket_id):
+                    await queue.put(chunk)
+            except asyncio.CancelledError:
+                await queue.put(None)
+                raise
+            except Exception:  # noqa: BLE001
+                await queue.put(None)
+
+        producer_task = asyncio.create_task(_producer())
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        queue.get(), timeout=_HEARTBEAT_SECONDS
+                    )
+                except TimeoutError:
+                    yield f"event: ping\ndata: {{}}\n\n"
+                    continue
+                if chunk is None:
+                    break
+                yield chunk
+        finally:
+            producer_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await producer_task
 
     return StreamingResponse(
         _stream_with_heartbeat(),
