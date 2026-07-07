@@ -95,7 +95,15 @@ class AdminSupportTicketListParams(APIModel):
         status: SupportTicketStatus | None = Query(default=None),
         q: str | None = Query(default=None, max_length=200),
     ) -> AdminSupportTicketListParams:
-        return cls(page=page, page_size=page_size, status=status, q=q)
+        params = cls(page=page, page_size=page_size, status=status, q=q)
+        # #region agent log
+        import json, time
+        from pathlib import Path
+        _log_path = Path(__file__).resolve().parents[3] / "debug-499439.log"
+        with _log_path.open("a", encoding="utf-8") as _f:
+            _f.write(json.dumps({"sessionId": "499439", "runId": "post-fix", "hypothesisId": "B", "location": "schema.py:AdminSupportTicketListParams.as_query", "message": "status after APIModel construction", "data": {"query_status": status, "query_status_type": type(status).__name__ if status is not None else None, "params_status": params.status, "params_status_type": type(params.status).__name__ if params.status is not None else None}, "timestamp": int(time.time() * 1000)}) + "\n")
+        # #endregion
+        return params
 
 
 class UserSupportTicketListParams(APIModel):

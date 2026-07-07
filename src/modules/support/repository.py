@@ -87,7 +87,7 @@ class SupportTicketsRepository:
     ) -> list[SupportTicketDocument]:
         query: dict[str, Any] = {"user_id": user_id}
         if status is not None:
-            query["status"] = status.value
+            query["status"] = status
         cursor = (
             self._collection.find(query)
             .sort("last_message_at", DESCENDING)
@@ -102,7 +102,7 @@ class SupportTicketsRepository:
     ) -> int:
         query: dict[str, Any] = {"user_id": user_id}
         if status is not None:
-            query["status"] = status.value
+            query["status"] = status
         return await self._collection.count_documents(query)
 
     async def list_admin(
@@ -125,7 +125,18 @@ class SupportTicketsRepository:
     def _build_admin_filter(params: AdminSupportTicketListParams) -> dict[str, Any]:
         query: dict[str, Any] = {}
         if params.status is not None:
-            query["status"] = params.status.value
+            # #region agent log
+            import json, time
+            from pathlib import Path
+            _log_path = Path(__file__).resolve().parents[3] / "debug-499439.log"
+            with _log_path.open("a", encoding="utf-8") as _f:
+                _f.write(json.dumps({"sessionId": "499439", "runId": "post-fix", "hypothesisId": "A", "location": "repository.py:_build_admin_filter", "message": "status type before filter", "data": {"status": params.status, "status_type": type(params.status).__name__, "has_value_attr": hasattr(params.status, "value")}, "timestamp": int(time.time() * 1000)}) + "\n")
+            # #endregion
+            query["status"] = params.status
+            # #region agent log
+            with _log_path.open("a", encoding="utf-8") as _f:
+                _f.write(json.dumps({"sessionId": "499439", "runId": "post-fix", "hypothesisId": "A", "location": "repository.py:_build_admin_filter", "message": "filter built successfully", "data": {"query_status": query["status"]}, "timestamp": int(time.time() * 1000)}) + "\n")
+            # #endregion
         if params.q:
             escaped = re.escape(params.q.strip())
             if escaped.isdigit():
