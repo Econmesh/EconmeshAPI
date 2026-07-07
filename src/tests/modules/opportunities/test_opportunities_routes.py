@@ -16,9 +16,12 @@ from src.modules.opportunities.model import (
 )
 from src.modules.opportunities.routes import _build_controller
 from src.modules.opportunities.schema import (
+    MatchDetails,
+    MatchPotential,
     OpportunityImagePresignResponse,
     OpportunityImageResponse,
     OpportunityListResponse,
+    OpportunityMatch,
     OpportunityResponse,
 )
 from src.shared.dependencies.auth import CurrentUser, get_current_user
@@ -93,6 +96,7 @@ async def test_list_opportunities_returns_envelope(
                 page=1,
                 page_size=12,
                 has_more=False,
+                has_demands=False,
             )
 
     app.dependency_overrides[get_current_user] = lambda: fake_user
@@ -106,8 +110,66 @@ async def test_list_opportunities_returns_envelope(
         body = response.json()
         assert body["total"] == 1
         assert body["has_more"] is False
+        assert body["has_demands"] is False
         assert len(body["items"]) == 1
         assert body["items"][0]["title"] == "Venda de PET Triturado"
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_list_opportunities_returns_matching_when_has_demands(
+    app: FastAPI, client: AsyncClient
+) -> None:
+    fake_user = CurrentUser(uid="firebase-uid-123", email="alice@example.com")
+    opportunity = _sample_opportunity()
+    demand = _sample_opportunity().model_copy(
+        update={"offer_demand": OfferDemand.RECEPTOR, "title": "Demanda de PET"}
+    )
+    matching = OpportunityMatch(
+        score=92,
+        potential=MatchPotential.HIGH,
+        details=MatchDetails(
+            category=100,
+            technical_detail=100,
+            purity=100,
+            physical_state=100,
+            location=90,
+            price=80,
+            quantity=95,
+        ),
+        matched_demand=demand,
+    )
+    opportunity_with_match = opportunity.model_copy(
+        update={"matching": matching}
+    )
+
+    class _StubController(OpportunitiesController):
+        def __init__(self) -> None:
+            pass
+
+        async def list(self, params, current_user: CurrentUser) -> OpportunityListResponse:
+            return OpportunityListResponse(
+                items=[opportunity_with_match],
+                total=1,
+                page=1,
+                page_size=12,
+                has_more=False,
+                has_demands=True,
+            )
+
+    app.dependency_overrides[get_current_user] = lambda: fake_user
+    app.dependency_overrides[_build_controller] = lambda: _StubController()
+    try:
+        response = await client.get(
+            "/api/v1/opportunities",
+            headers={"Authorization": "Bearer fake-token"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["has_demands"] is True
+        assert body["items"][0]["matching"]["score"] == 92
+        assert body["items"][0]["matching"]["potential"] == "HIGH"
+        assert body["items"][0]["matching"]["details"]["category"] == 100
     finally:
         app.dependency_overrides.clear()
 

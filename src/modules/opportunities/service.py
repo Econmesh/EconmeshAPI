@@ -11,7 +11,8 @@ from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from src.core.firebase import firebase
 from src.modules.auth.repository import AuthRepository
 from src.modules.companies.repository import CompaniesRepository
-from src.modules.opportunities.model import OpportunityDocument, OpportunityImage
+from src.modules.opportunities.model import OfferDemand, OpportunityDocument, OpportunityImage
+from src.modules.opportunities.matching_service import MatchingService
 from src.modules.opportunities.repository import OpportunitiesRepository
 from src.modules.opportunities.schema import (
     OpportunityCreate,
@@ -125,16 +126,41 @@ class OpportunitiesService:
     async def list(
         self, params: OpportunityListParams, *, firebase_uid: str
     ) -> OpportunityListResponse:
-        await self._resolve_user_id(firebase_uid)
+        owner_user_id = await self._resolve_user_id(firebase_uid)
         docs = await self._repo.list_filtered(params)
         total = await self._repo.count_filtered(params)
         has_more = params.page * params.page_size < total
+
+        demands = await self._repo.list_demands_for_owner(owner_user_id)
+        has_demands = len(demands) > 0
+        demand_responses = {
+            str(demand.id): self._to_response(demand) for demand in demands
+        }
+
+        items: list[OpportunityResponse] = []
+        for doc in docs:
+            response = self._to_response(doc)
+            if (
+                has_demands
+                and doc.offer_demand == OfferDemand.GERADOR
+                and doc.owner_user_id != owner_user_id
+            ):
+                matching = MatchingService.find_best_match(
+                    doc,
+                    demands,
+                    demand_responses=demand_responses,
+                )
+                if matching is not None:
+                    response = response.model_copy(update={"matching": matching})
+            items.append(response)
+
         return OpportunityListResponse(
-            items=[self._to_response(doc) for doc in docs],
+            items=items,
             total=total,
             page=params.page,
             page_size=params.page_size,
             has_more=has_more,
+            has_demands=has_demands,
         )
 
     async def get(

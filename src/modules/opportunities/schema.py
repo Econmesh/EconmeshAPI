@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from uuid import UUID
 
 from fastapi import Query
@@ -110,6 +111,29 @@ class OpportunityUpdate(_OpportunityPayloadBase):
         return self
 
 
+class MatchPotential(StrEnum):
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+
+
+class MatchDetails(APIModel):
+    category: int = Field(..., ge=0, le=100)
+    technical_detail: int = Field(..., ge=0, le=100)
+    purity: int = Field(..., ge=0, le=100)
+    physical_state: int = Field(..., ge=0, le=100)
+    location: int = Field(..., ge=0, le=100)
+    quantity: int = Field(..., ge=0, le=100)
+    price: int = Field(..., ge=0, le=100)
+
+
+class OpportunityMatch(APIModel):
+    score: int = Field(..., ge=0, le=100)
+    potential: MatchPotential
+    details: MatchDetails
+    matched_demand: "OpportunityResponse"
+
+
 class OpportunityResponse(APIModel):
     id: UUID
     company_id: UUID
@@ -135,6 +159,7 @@ class OpportunityResponse(APIModel):
     images: list[OpportunityImageResponse]
     created_at: datetime
     updated_at: datetime
+    matching: OpportunityMatch | None = None
 
 
 class OpportunityListResponse(APIModel):
@@ -143,6 +168,7 @@ class OpportunityListResponse(APIModel):
     page: int = Field(..., ge=1)
     page_size: int = Field(..., ge=1)
     has_more: bool
+    has_demands: bool = False
 
 
 class OpportunityListParams(APIModel):
@@ -214,6 +240,8 @@ class OpportunityImagePresignResponse(APIModel):
 
 
 __all__ = [
+    "MatchDetails",
+    "MatchPotential",
     "OpportunityCreate",
     "OpportunityImageInput",
     "OpportunityImagePresignRequest",
@@ -221,6 +249,7 @@ __all__ = [
     "OpportunityImageResponse",
     "OpportunityListParams",
     "OpportunityListResponse",
+    "OpportunityMatch",
     "OpportunityResponse",
     "OpportunityUpdate",
 ]

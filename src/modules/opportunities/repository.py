@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pymongo import ASCENDING, DESCENDING, ReturnDocument
 
-from src.modules.opportunities.model import OpportunityDocument, OpportunitySort
+from src.modules.opportunities.model import OfferDemand, OpportunityDocument, OpportunitySort
 from src.modules.opportunities.schema import OpportunityListParams
 from src.shared.utils.time import utcnow
 
@@ -144,6 +144,19 @@ class OpportunitiesRepository:
     async def count_filtered(self, params: OpportunityListParams) -> int:
         query = self._build_filter(params)
         return await self._collection.count_documents(query)
+
+    async def list_demands_for_owner(
+        self, owner_user_id: UUID
+    ) -> list[OpportunityDocument]:
+        cursor = self._collection.find(
+            {
+                "is_active": True,
+                "offer_demand": OfferDemand.RECEPTOR,
+                "owner_user_id": owner_user_id,
+            }
+        ).sort([("created_at", DESCENDING)])
+        docs = await cursor.to_list(length=None)
+        return [OpportunityDocument.model_validate(doc) for doc in docs]
 
     async def get(self, opportunity_id: UUID) -> OpportunityDocument | None:
         doc = await self._collection.find_one({"_id": opportunity_id})
