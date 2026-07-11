@@ -12,6 +12,7 @@ import asyncio
 from src.core.database import mongo
 from src.core.logging import get_logger, setup_logging
 from src.modules.auth.repository import AuthRepository, EmailVerificationRepository
+from src.modules.agreements.repository import AgreementEventsRepository, AgreementsRepository
 from src.modules.coming_soon.repository import ComingSoonRepository
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.notifications.repository import (
@@ -36,6 +37,8 @@ async def _main() -> None:
         await ComingSoonRepository(mongo.db).ensure_indexes()
         await CompaniesRepository(mongo.db).ensure_indexes()
         await OpportunitiesRepository(mongo.db).ensure_indexes()
+        await AgreementsRepository(mongo.db).ensure_indexes()
+        await AgreementEventsRepository(mongo.db).ensure_indexes()
         await NotificationGroupsRepository(mongo.db).ensure_indexes()
         await NotificationCampaignsRepository(mongo.db).ensure_indexes()
         await UserNotificationsRepository(mongo.db).ensure_indexes()

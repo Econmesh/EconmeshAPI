@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from datetime import UTC, date, datetime, time
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from pymongo import ASCENDING, ReturnDocument
@@ -14,6 +15,19 @@ from src.shared.utils.time import utcnow
 if TYPE_CHECKING:
     from pymongo.asynchronous.collection import AsyncCollection
     from pymongo.asynchronous.database import AsyncDatabase
+
+
+def _bson_safe(value: Any) -> Any:
+    """Convert values that BSON cannot encode (e.g. ``datetime.date``)."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, time.min, tzinfo=UTC)
+    if isinstance(value, dict):
+        return {k: _bson_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_bson_safe(v) for v in value]
+    return value
 
 
 class UsersRepository:
@@ -35,14 +49,14 @@ class UsersRepository:
         return UserProfileDocument.model_validate(doc) if doc else None
 
     async def create(self, doc: UserProfileDocument) -> UserProfileDocument:
-        await self._collection.insert_one(doc.to_mongo())
+        await self._collection.insert_one(_bson_safe(doc.to_mongo()))
         return doc
 
     async def upsert_for_user(
         self, user_id: UUID, patch: dict[str, object]
     ) -> UserProfileDocument:
         now = utcnow()
-        set_on_insert = {
+        set_on_insert: dict[str, object] = {
             "_id": new_uuid(),
             "user_id": user_id,
             "created_at": now,
@@ -50,11 +64,51 @@ class UsersRepository:
             "preferences": {},
             "country": "BR",
         }
-        patch["updated_at"] = now
+        mongo_patch = _bson_safe({**patch, "updated_at": now})
+        # MongoDB rejects the same path in both $set and $setOnInsert.
+        for key in list(set_on_insert):
+            if key in mongo_patch:
+                del set_on_insert[key]
+
+        # #region agent log
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+
+            _bd = mongo_patch.get("birth_date")
+            _log = _Path(__file__).resolve().parents[3] / "debug-bb369f.log"
+            _log.open("a", encoding="utf-8").write(
+                _json.dumps(
+                    {
+                        "sessionId": "bb369f",
+                        "runId": "post-fix",
+                        "hypothesisId": "A,B",
+                        "location": "users/repository.py:upsert_for_user",
+                        "message": "upsert about to write bson-safe patch",
+                        "data": {
+                            "birth_date_type": type(_bd).__name__ if _bd is not None else None,
+                            "set_keys": sorted(mongo_patch.keys()),
+                            "set_on_insert_keys": sorted(set_on_insert.keys()),
+                            "overlap": sorted(
+                                set(mongo_patch).intersection(set_on_insert)
+                            ),
+                        },
+                        "timestamp": __import__("time").time() * 1000,
+                    }
+                )
+                + "\n"
+            )
+        except Exception:
+            pass
+        # #endregion
+
+        update: dict[str, object] = {"$set": mongo_patch}
+        if set_on_insert:
+            update["$setOnInsert"] = set_on_insert
 
         doc = await self._collection.find_one_and_update(
             {"user_id": user_id},
-            {"$set": patch, "$setOnInsert": set_on_insert},
+            update,
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )

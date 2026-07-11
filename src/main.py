@@ -29,6 +29,7 @@ from src.core.firebase import firebase
 from src.core.logging import get_logger, setup_logging
 from src.infrastructure.redis.client import redis_manager
 from src.modules.admin import router as admin_router
+from src.modules.agreements import router as agreements_router
 from src.modules.auth import router as auth_router
 from src.modules.blockchain import router as blockchain_router
 from src.modules.coming_soon import router as coming_soon_router
@@ -153,6 +154,7 @@ def _register_routers(app: FastAPI, settings: Settings) -> None:
     api_v1.include_router(users_router)
     api_v1.include_router(companies_router)
     api_v1.include_router(opportunities_router)
+    api_v1.include_router(agreements_router)
     api_v1.include_router(notifications_router)
     api_v1.include_router(support_router)
     api_v1.include_router(circularity_router)

@@ -62,6 +62,28 @@ async def update_my_profile(
     controller: ControllerDep,
     current_user: CurrentUserDep,
 ) -> UserProfileResponse:
+    # #region agent log
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        _log = _Path(__file__).resolve().parents[3] / "debug-bb369f.log"
+        _dump = payload.model_dump(exclude_unset=True)
+        _log.open("a", encoding="utf-8").write(
+            _json.dumps(
+                {
+                    "sessionId": "bb369f",
+                    "hypothesisId": "D",
+                    "location": "users/routes.py:update_my_profile",
+                    "message": "route accepted payload (validation passed)",
+                    "data": {"keys": sorted(_dump.keys()), "uid_present": bool(current_user)},
+                    "timestamp": __import__("time").time() * 1000,
+                }
+            )
+            + "\n"
+        )
+    except Exception:
+        pass
+    # #endregion
     return await controller.update_my_profile(payload, current_user)
 
 

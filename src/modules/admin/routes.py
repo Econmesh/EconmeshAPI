@@ -9,7 +9,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from src.modules.admin.controller import AdminController
@@ -23,6 +23,18 @@ from src.modules.admin.schema import (
     AdminUserUpdate,
 )
 from src.modules.admin.service import AdminService
+from src.modules.agreements.controller import AgreementsController
+from src.modules.agreements.notification_service import AgreementNotificationService
+from src.modules.agreements.repository import AgreementEventsRepository, AgreementsRepository
+from src.modules.agreements.schema import (
+    AgreementListParams,
+    AgreementListResponse,
+    AgreementResponse,
+    DownloadUrlResponse,
+    ProgressResponse,
+    TimelineResponse,
+)
+from src.modules.agreements.service import AgreementsService
 from src.modules.auth.repository import AuthRepository, EmailVerificationRepository
 from src.modules.auth.schema import MeResponse, RegisterResponse
 from src.modules.auth.service import AuthService
@@ -45,6 +57,7 @@ from src.modules.notifications.controller import (
     AdminNotificationCampaignsController,
     AdminNotificationGroupsController,
 )
+from src.modules.notifications.repository import UserNotificationsRepository
 from src.modules.notifications.schema import (
     NotificationCampaignCreate,
     NotificationCampaignListResponse,
@@ -67,7 +80,10 @@ from src.modules.support.schema import (
     SupportTicketListResponse,
     SupportTicketResponse,
 )
+from src.modules.users.repository import UsersRepository
+from src.infrastructure.email import email_sender
 from src.infrastructure.realtime.presence import PresenceService
+from src.infrastructure.realtime.redis_pubsub import NotificationRealtimePublisher
 from src.infrastructure.realtime.support_pubsub import (
     subscribe_support_admin,
     subscribe_support_ticket,
@@ -119,6 +135,33 @@ def _build_controller(
 
 
 ControllerDep = Annotated[AdminController, Depends(_build_controller)]
+
+
+def _build_agreements_controller(
+    db: Annotated["AsyncDatabase", Depends(get_db)],
+    redis_client: Annotated["Redis", Depends(get_redis)],
+) -> AgreementsController:
+    auth_repo = AuthRepository(db)
+    notifications = AgreementNotificationService(
+        auth_repo=auth_repo,
+        user_notifications_repo=UserNotificationsRepository(db),
+        email_sender=email_sender,
+        notification_realtime=NotificationRealtimePublisher(redis_client),
+    )
+    service = AgreementsService(
+        AgreementsRepository(db),
+        AgreementEventsRepository(db),
+        auth_repo,
+        CompaniesRepository(db),
+        UsersRepository(db),
+        notifications=notifications,
+    )
+    return AgreementsController(service)
+
+
+AgreementsControllerDep = Annotated[
+    AgreementsController, Depends(_build_agreements_controller)
+]
 
 
 def _user_list_params(
@@ -291,6 +334,74 @@ async def delete_opportunity(
 ) -> MessageResponse:
     await controller.delete_opportunity(opportunity_id)
     return MessageResponse(message="Opportunity deleted successfully.")
+
+
+# --------------------------------------------------------------- agreements
+@router.get(
+    "/agreements",
+    response_model=AgreementListResponse,
+    summary="List all agreements (platform admin).",
+)
+async def admin_list_agreements(
+    controller: AgreementsControllerDep,
+    current_user: CurrentUserDep,
+    params: Annotated[AgreementListParams, Depends(AgreementListParams.as_query)],
+) -> AgreementListResponse:
+    return await controller.list(params, current_user)
+
+
+@router.get(
+    "/agreements/{agreement_id}",
+    response_model=AgreementResponse,
+    summary="Get agreement detail (platform admin).",
+)
+async def admin_get_agreement(
+    agreement_id: UUID,
+    controller: AgreementsControllerDep,
+    current_user: CurrentUserDep,
+) -> AgreementResponse:
+    return await controller.get(agreement_id, current_user)
+
+
+@router.get(
+    "/agreements/{agreement_id}/timeline",
+    response_model=TimelineResponse,
+    summary="Agreement timeline (platform admin).",
+)
+async def admin_agreement_timeline(
+    agreement_id: UUID,
+    controller: AgreementsControllerDep,
+    current_user: CurrentUserDep,
+) -> TimelineResponse:
+    return await controller.timeline(agreement_id, current_user)
+
+
+@router.get(
+    "/agreements/{agreement_id}/progress",
+    response_model=ProgressResponse,
+    summary="Agreement progress (platform admin).",
+)
+async def admin_agreement_progress(
+    agreement_id: UUID,
+    controller: AgreementsControllerDep,
+    current_user: CurrentUserDep,
+) -> ProgressResponse:
+    return await controller.progress(agreement_id, current_user)
+
+
+@router.get(
+    "/agreements/{agreement_id}/download/{artifact}",
+    response_model=DownloadUrlResponse,
+    summary="Download agreement artifact (platform admin).",
+)
+async def admin_download_agreement(
+    agreement_id: UUID,
+    artifact: str,
+    controller: AgreementsControllerDep,
+    current_user: CurrentUserDep,
+    request: Request,
+) -> DownloadUrlResponse:
+    return await controller.download(agreement_id, artifact, current_user, request)
 
 
 # ---------------------------------------------------------- notifications

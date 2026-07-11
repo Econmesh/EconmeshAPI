@@ -64,7 +64,7 @@ class UsersService:
         address = profile.address
         required_user = [user.name, user.email, user.phone]
         required_profile = [profile.cpf, profile.birth_date, profile.job_title, profile.country]
-        required_address = (
+        has_required_address = bool(
             address is not None
             and address.postal_code
             and address.street
@@ -73,7 +73,7 @@ class UsersService:
             and address.state
         )
 
-        return all(required_user) and all(required_profile) and required_address
+        return all(required_user) and all(required_profile) and has_required_address
 
     def _to_response(
         self, user: UserDocument, profile: UserProfileDocument | None
@@ -113,6 +113,35 @@ class UsersService:
         user = await self._resolve_user(firebase_uid)
         data = payload.model_dump(exclude_unset=True)
 
+        # #region agent log
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            _log = _Path(__file__).resolve().parents[3] / "debug-bb369f.log"
+            _bd = data.get("birth_date")
+            _log.open("a", encoding="utf-8").write(
+                _json.dumps(
+                    {
+                        "sessionId": "bb369f",
+                        "runId": "post-fix",
+                        "hypothesisId": "D",
+                        "location": "users/service.py:update_my_profile:entry",
+                        "message": "profile update entered service",
+                        "data": {
+                            "keys": sorted(data.keys()),
+                            "has_country": "country" in data,
+                            "birth_date_type": type(_bd).__name__ if _bd is not None else None,
+                            "birth_date_repr": repr(_bd) if _bd is not None else None,
+                        },
+                        "timestamp": __import__("time").time() * 1000,
+                    }
+                )
+                + "\n"
+            )
+        except Exception:
+            pass
+        # #endregion
+
         user_patch: dict[str, object] = {}
         profile_patch: dict[str, object] = {}
 
@@ -133,6 +162,36 @@ class UsersService:
 
         profile_patch.update(data)
 
+        # #region agent log
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            _set_on_insert_keys = {"_id", "user_id", "created_at", "locale", "preferences", "country"}
+            _overlap = sorted(_set_on_insert_keys.intersection(profile_patch.keys()))
+            _type_map = {k: type(v).__name__ for k, v in profile_patch.items()}
+            _log = _Path(__file__).resolve().parents[3] / "debug-bb369f.log"
+            _log.open("a", encoding="utf-8").write(
+                _json.dumps(
+                    {
+                        "sessionId": "bb369f",
+                        "hypothesisId": "A,B",
+                        "location": "users/service.py:update_my_profile:before_writes",
+                        "message": "patches ready before firebase/mongo",
+                        "data": {
+                            "user_patch_keys": sorted(user_patch.keys()),
+                            "profile_patch_keys": sorted(profile_patch.keys()),
+                            "set_on_insert_overlap": _overlap,
+                            "profile_value_types": _type_map,
+                        },
+                        "timestamp": __import__("time").time() * 1000,
+                    }
+                )
+                + "\n"
+            )
+        except Exception:
+            pass
+        # #endregion
+
         if user_patch:
             firebase_fields: dict[str, object] = {}
             if "name" in user_patch:
@@ -143,7 +202,35 @@ class UsersService:
                 firebase_fields["photo_url"] = user_patch["picture"]
 
             if firebase_fields:
-                await firebase.update_user(user.firebase_uid, **firebase_fields)
+                try:
+                    await firebase.update_user(user.firebase_uid, **firebase_fields)
+                except Exception as _fb_exc:
+                    # #region agent log
+                    try:
+                        import json as _json
+                        from pathlib import Path as _Path
+                        _log = _Path(__file__).resolve().parents[3] / "debug-bb369f.log"
+                        _log.open("a", encoding="utf-8").write(
+                            _json.dumps(
+                                {
+                                    "sessionId": "bb369f",
+                                    "hypothesisId": "C",
+                                    "location": "users/service.py:update_my_profile:firebase",
+                                    "message": "firebase update_user failed",
+                                    "data": {
+                                        "exc_type": type(_fb_exc).__name__,
+                                        "exc_msg": str(_fb_exc)[:300],
+                                        "firebase_fields": sorted(firebase_fields.keys()),
+                                    },
+                                    "timestamp": __import__("time").time() * 1000,
+                                }
+                            )
+                            + "\n"
+                        )
+                    except Exception:
+                        pass
+                    # #endregion
+                    raise
 
             updated_user = await self._auth_repo.update_profile(user.id, user_patch)
             if updated_user is None:
@@ -152,9 +239,119 @@ class UsersService:
 
         profile = await self._repo.get_by_user(user.id)
         if profile_patch:
-            profile = await self._repo.upsert_for_user(user.id, profile_patch)
+            try:
+                profile = await self._repo.upsert_for_user(user.id, profile_patch)
+                # #region agent log
+                try:
+                    import json as _json
+                    from pathlib import Path as _Path
+                    _log = _Path(__file__).resolve().parents[3] / "debug-bb369f.log"
+                    _log.open("a", encoding="utf-8").write(
+                        _json.dumps(
+                            {
+                                "sessionId": "bb369f",
+                                "runId": "post-fix",
+                                "hypothesisId": "A,B",
+                                "location": "users/service.py:update_my_profile:upsert_ok",
+                                "message": "mongo upsert_for_user succeeded",
+                                "data": {
+                                    "profile_id": str(profile.id) if profile else None,
+                                    "birth_date": str(profile.birth_date) if profile else None,
+                                    "country": profile.country if profile else None,
+                                },
+                                "timestamp": __import__("time").time() * 1000,
+                            }
+                        )
+                        + "\n"
+                    )
+                except Exception:
+                    pass
+                # #endregion
+            except Exception as _mongo_exc:
+                # #region agent log
+                try:
+                    import json as _json
+                    from pathlib import Path as _Path
+                    _log = _Path(__file__).resolve().parents[3] / "debug-bb369f.log"
+                    _log.open("a", encoding="utf-8").write(
+                        _json.dumps(
+                            {
+                                "sessionId": "bb369f",
+                                "runId": "post-fix",
+                                "hypothesisId": "A,B",
+                                "location": "users/service.py:update_my_profile:upsert",
+                                "message": "mongo upsert_for_user failed",
+                                "data": {
+                                    "exc_type": type(_mongo_exc).__name__,
+                                    "exc_msg": str(_mongo_exc)[:400],
+                                    "profile_patch_keys": sorted(profile_patch.keys()),
+                                },
+                                "timestamp": __import__("time").time() * 1000,
+                            }
+                        )
+                        + "\n"
+                    )
+                except Exception:
+                    pass
+                # #endregion
+                raise
 
-        return self._to_response(user, profile)
+        try:
+            result = self._to_response(user, profile)
+            # #region agent log
+            try:
+                import json as _json
+                from pathlib import Path as _Path
+                _log = _Path(__file__).resolve().parents[3] / "debug-bb369f.log"
+                _log.open("a", encoding="utf-8").write(
+                    _json.dumps(
+                        {
+                        "sessionId": "bb369f",
+                        "runId": "post-fix-2",
+                        "hypothesisId": "E",
+                        "location": "users/service.py:update_my_profile:success",
+                        "message": "profile update completed",
+                        "data": {
+                            "is_complete": result.is_complete,
+                            "is_complete_type": type(result.is_complete).__name__,
+                            "birth_date": str(result.birth_date) if result.birth_date else None,
+                        },
+                            "timestamp": __import__("time").time() * 1000,
+                        }
+                    )
+                    + "\n"
+                )
+            except Exception:
+                pass
+            # #endregion
+            return result
+        except Exception as _resp_exc:
+            # #region agent log
+            try:
+                import json as _json
+                from pathlib import Path as _Path
+                _log = _Path(__file__).resolve().parents[3] / "debug-bb369f.log"
+                _log.open("a", encoding="utf-8").write(
+                    _json.dumps(
+                        {
+                            "sessionId": "bb369f",
+                            "runId": "post-fix",
+                            "hypothesisId": "E",
+                            "location": "users/service.py:update_my_profile:response",
+                            "message": "_to_response failed",
+                            "data": {
+                                "exc_type": type(_resp_exc).__name__,
+                                "exc_msg": str(_resp_exc)[:300],
+                            },
+                            "timestamp": __import__("time").time() * 1000,
+                        }
+                    )
+                    + "\n"
+                )
+            except Exception:
+                pass
+            # #endregion
+            raise
 
     async def presign_avatar(
         self, payload: AvatarPresignRequest, *, firebase_uid: str
