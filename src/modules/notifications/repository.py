@@ -248,7 +248,13 @@ class UserNotificationsRepository:
             .limit(limit)
         )
         docs = await cursor.to_list(length=limit)
-        return [UserNotificationDocument.model_validate(doc) for doc in docs]
+        validated: list[UserNotificationDocument] = []
+        for doc in docs:
+            try:
+                validated.append(UserNotificationDocument.model_validate(doc))
+            except Exception as exc:  # noqa: BLE001s
+                raise
+        return validated
 
     async def count_for_user(
         self, user_id: UUID, *, unread_only: bool = False

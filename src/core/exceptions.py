@@ -64,6 +64,12 @@ class NotFoundError(AppException):
     message = "The requested resource was not found."
 
 
+class GoneError(AppException):
+    status_code = status.HTTP_410_GONE
+    code = "gone"
+    message = "The requested resource is no longer available."
+
+
 class ConflictError(AppException):
     status_code = status.HTTP_409_CONFLICT
     code = "conflict"
@@ -180,6 +186,7 @@ __all__ = [
     "ConflictError",
     "ExternalServiceError",
     "ForbiddenError",
+    "GoneError",
     "NotFoundError",
     "RateLimitError",
     "TimeoutAppError",
