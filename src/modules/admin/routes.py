@@ -9,7 +9,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from src.modules.admin.controller import AdminController
@@ -67,6 +67,15 @@ from src.modules.notifications.schema import (
     NotificationGroupResponse,
     NotificationGroupUpdate,
 )
+from src.modules.blog.controller import AdminBlogController
+from src.modules.blog.deps import build_admin_blog_controller
+from src.modules.blog.schema import (
+    BlogAdminListParams,
+    BlogPostCreate,
+    BlogPostListResponse,
+    BlogPostResponse,
+    BlogPostUpdate,
+)
 from src.modules.support.controller import AdminSupportController
 from src.modules.support.deps import build_admin_support_controller, build_support_service
 from src.modules.support.schema import (
@@ -94,7 +103,7 @@ from src.shared.dependencies.db import get_db
 from src.shared.dependencies.rbac import require_role
 from src.shared.dependencies.redis import get_redis
 from src.shared.schemas.pagination import PaginationParams
-from src.shared.schemas.responses import MessageResponse
+from src.shared.schemas.responses import MessageResponse, StorageUploadResponse
 
 if TYPE_CHECKING:
     from pymongo.asynchronous.database import AsyncDatabase
@@ -571,6 +580,116 @@ async def send_notification_campaign_now(
     controller: NotificationCampaignsControllerDep,
 ) -> NotificationCampaignResponse:
     return await controller.send_now(campaign_id)
+
+
+# ---------------------------------------------------------------------- blog
+def _build_blog_controller(
+    db: Annotated["AsyncDatabase", Depends(get_db)],
+) -> AdminBlogController:
+    return build_admin_blog_controller(db)
+
+
+BlogControllerDep = Annotated[AdminBlogController, Depends(_build_blog_controller)]
+
+
+@router.get(
+    "/blog/posts",
+    response_model=BlogPostListResponse,
+    summary="List blog posts (admin).",
+)
+async def list_blog_posts(
+    controller: BlogControllerDep,
+    params: Annotated[BlogAdminListParams, Depends(BlogAdminListParams.as_query)],
+) -> BlogPostListResponse:
+    return await controller.list(params)
+
+
+@router.post(
+    "/blog/posts/images/upload",
+    response_model=StorageUploadResponse,
+    summary="Upload a blog cover image.",
+)
+async def upload_blog_cover(
+    controller: BlogControllerDep,
+    admin_id: AdminUserIdDep,
+    file: UploadFile = File(...),
+) -> StorageUploadResponse:
+    return await controller.upload_cover(file, owner_id=admin_id)
+
+
+@router.get(
+    "/blog/posts/{post_id}",
+    response_model=BlogPostResponse,
+    summary="Get a blog post (admin).",
+)
+async def get_blog_post(
+    post_id: UUID,
+    controller: BlogControllerDep,
+) -> BlogPostResponse:
+    return await controller.get(post_id)
+
+
+@router.post(
+    "/blog/posts",
+    response_model=BlogPostResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a blog post.",
+)
+async def create_blog_post(
+    payload: BlogPostCreate,
+    controller: BlogControllerDep,
+    admin_id: AdminUserIdDep,
+) -> BlogPostResponse:
+    return await controller.create(payload, created_by=admin_id)
+
+
+@router.patch(
+    "/blog/posts/{post_id}",
+    response_model=BlogPostResponse,
+    summary="Update a blog post.",
+)
+async def update_blog_post(
+    post_id: UUID,
+    payload: BlogPostUpdate,
+    controller: BlogControllerDep,
+) -> BlogPostResponse:
+    return await controller.update(post_id, payload)
+
+
+@router.delete(
+    "/blog/posts/{post_id}",
+    response_model=MessageResponse,
+    summary="Delete a blog post.",
+)
+async def delete_blog_post(
+    post_id: UUID,
+    controller: BlogControllerDep,
+) -> MessageResponse:
+    return await controller.delete(post_id)
+
+
+@router.post(
+    "/blog/posts/{post_id}/publish",
+    response_model=BlogPostResponse,
+    summary="Publish a blog post immediately.",
+)
+async def publish_blog_post(
+    post_id: UUID,
+    controller: BlogControllerDep,
+) -> BlogPostResponse:
+    return await controller.publish(post_id)
+
+
+@router.post(
+    "/blog/posts/{post_id}/disable",
+    response_model=BlogPostResponse,
+    summary="Disable a blog post (410 on public slug).",
+)
+async def disable_blog_post(
+    post_id: UUID,
+    controller: BlogControllerDep,
+) -> BlogPostResponse:
+    return await controller.disable(post_id)
 
 
 # ------------------------------------------------------------------ support
