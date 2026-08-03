@@ -100,6 +100,8 @@ indent-style = "space"
 [tool.pyright]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
 include = ["src"]
 exclude = ["**/__pycache__", ".venv", "build", "dist"]
 reportMissingImports = "error"
