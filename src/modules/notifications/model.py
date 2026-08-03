@@ -72,6 +72,7 @@ class NotificationCampaignDocument(DomainDocument):
 class NotificationKind(StrEnum):
     GENERAL = "general"
     SUPPORT = "support"
+    AGREEMENT = "agreement"
 
 
 class UserNotificationDocument(DomainDocument):
