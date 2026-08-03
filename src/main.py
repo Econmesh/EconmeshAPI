@@ -36,6 +36,7 @@ from src.modules.blog import router as blog_router
 from src.modules.coming_soon import router as coming_soon_router
 from src.modules.circularity import router as circularity_router
 from src.modules.companies import router as companies_router
+from src.modules.conversations import router as conversations_router
 from src.modules.files import router as files_router
 from src.modules.opportunities import router as opportunities_router
 from src.modules.notifications import router as notifications_router
@@ -158,6 +159,7 @@ def _register_routers(app: FastAPI, settings: Settings) -> None:
     api_v1.include_router(opportunities_router)
     api_v1.include_router(agreements_router)
     api_v1.include_router(notifications_router)
+    api_v1.include_router(conversations_router)
     api_v1.include_router(support_router)
     api_v1.include_router(circularity_router)
     api_v1.include_router(files_router)

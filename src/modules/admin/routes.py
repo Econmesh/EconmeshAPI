@@ -89,8 +89,22 @@ from src.modules.support.schema import (
     SupportTicketListResponse,
     SupportTicketResponse,
 )
+from src.modules.conversations.controller import AdminConversationsController
+from src.modules.conversations.deps import build_admin_conversations_controller
+from src.modules.conversations.schema import (
+    AdminConversationListParams,
+    ConversationDetailResponse,
+    ConversationInternalNoteCreate,
+    ConversationListResponse,
+    ConversationMessageListResponse,
+    ConversationMessageResponse,
+)
 from src.modules.users.repository import UsersRepository
 from src.infrastructure.email import email_sender
+from src.infrastructure.realtime.conversation_pubsub import (
+    subscribe_conversation_admin,
+    subscribe_conversation_thread,
+)
 from src.infrastructure.realtime.presence import PresenceService
 from src.infrastructure.realtime.redis_pubsub import NotificationRealtimePublisher
 from src.infrastructure.realtime.support_pubsub import (
@@ -957,6 +971,229 @@ async def support_admin_stream(
                 except TimeoutError:
                     await support_service.touch_presence(firebase_uid=current_user.uid)
                     yield f"event: ping\ndata: {{}}\n\n"
+                    continue
+                if chunk is None:
+                    break
+                yield chunk
+        finally:
+            producer_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await producer_task
+
+    return StreamingResponse(
+        _stream_with_heartbeat(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ----------------------------------------------------------- conversations
+_CONVERSATION_HEARTBEAT_SECONDS = 30
+
+
+def _build_conversations_controller(
+    db: Annotated["AsyncDatabase", Depends(get_db)],
+    redis_client: Annotated["Redis", Depends(get_redis)],
+) -> AdminConversationsController:
+    return build_admin_conversations_controller(db, redis_client)
+
+
+ConversationsControllerDep = Annotated[
+    AdminConversationsController, Depends(_build_conversations_controller)
+]
+
+
+async def _conversation_thread_event_stream(
+    redis_client: Redis,
+    conversation_id: UUID,
+) -> AsyncIterator[str]:
+    async for event in subscribe_conversation_thread(redis_client, conversation_id):
+        if event.get("type") == "ping":
+            yield "event: ping\ndata: {}\n\n"
+            continue
+        event_type = event.get("type", "message")
+        yield f"event: {event_type}\ndata: {json.dumps(event.get('data', {}))}\n\n"
+
+
+async def _conversation_admin_event_stream(
+    redis_client: Redis,
+    firebase_uid: str,
+    auth_repo: AuthRepository,
+    presence: PresenceService,
+) -> AsyncIterator[str]:
+    user = await auth_repo.get_by_firebase_uid(firebase_uid)
+    if user is None:
+        yield f"event: error\ndata: {json.dumps({'message': 'User not found'})}\n\n"
+        return
+
+    await presence.touch(user.id)
+    async for event in subscribe_conversation_admin(redis_client):
+        if event.get("type") == "ping":
+            await presence.touch(user.id)
+            yield "event: ping\ndata: {}\n\n"
+            continue
+        event_type = event.get("type", "message")
+        yield f"event: {event_type}\ndata: {json.dumps(event.get('data', {}))}\n\n"
+
+
+@router.get(
+    "/conversations",
+    response_model=ConversationListResponse,
+    summary="List all opportunity conversations.",
+)
+async def list_conversations_admin(
+    controller: ConversationsControllerDep,
+    params: Annotated[
+        AdminConversationListParams, Depends(AdminConversationListParams.as_query)
+    ],
+) -> ConversationListResponse:
+    return await controller.list_conversations(params)
+
+
+@router.get(
+    "/conversations/stream",
+    summary="SSE stream of conversation events for admins.",
+    status_code=status.HTTP_200_OK,
+)
+async def conversations_admin_stream(
+    current_user: CurrentUserDep,
+    db: Annotated["AsyncDatabase", Depends(get_db)],
+    redis_client: Annotated["Redis", Depends(get_redis)],
+) -> StreamingResponse:
+    auth_repo = AuthRepository(db)
+    presence = PresenceService(redis_client)
+
+    async def _stream_with_heartbeat() -> AsyncIterator[str]:
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        user = await auth_repo.get_by_firebase_uid(current_user.uid)
+        if user is not None:
+            await presence.touch(user.id)
+
+        async def _producer() -> None:
+            try:
+                async for chunk in _conversation_admin_event_stream(
+                    redis_client,
+                    current_user.uid,
+                    auth_repo,
+                    presence,
+                ):
+                    await queue.put(chunk)
+            except asyncio.CancelledError:
+                await queue.put(None)
+                raise
+            except Exception:  # noqa: BLE001
+                await queue.put(None)
+
+        producer_task = asyncio.create_task(_producer())
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        queue.get(), timeout=_CONVERSATION_HEARTBEAT_SECONDS
+                    )
+                except TimeoutError:
+                    if user is not None:
+                        await presence.touch(user.id)
+                    yield "event: ping\ndata: {}\n\n"
+                    continue
+                if chunk is None:
+                    break
+                yield chunk
+        finally:
+            producer_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await producer_task
+
+    return StreamingResponse(
+        _stream_with_heartbeat(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get(
+    "/conversations/{conversation_id}",
+    response_model=ConversationDetailResponse,
+    summary="Get conversation detail.",
+)
+async def get_conversation_admin(
+    conversation_id: UUID,
+    controller: ConversationsControllerDep,
+) -> ConversationDetailResponse:
+    return await controller.get_conversation(conversation_id)
+
+
+@router.get(
+    "/conversations/{conversation_id}/messages",
+    response_model=ConversationMessageListResponse,
+    summary="List all messages including internal notes.",
+)
+async def list_conversation_messages_admin(
+    conversation_id: UUID,
+    controller: ConversationsControllerDep,
+) -> ConversationMessageListResponse:
+    return await controller.list_messages(conversation_id)
+
+
+@router.post(
+    "/conversations/{conversation_id}/notes",
+    response_model=ConversationMessageResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add an internal note (admins only).",
+)
+async def add_conversation_note(
+    conversation_id: UUID,
+    payload: ConversationInternalNoteCreate,
+    controller: ConversationsControllerDep,
+    current_user: CurrentUserDep,
+) -> ConversationMessageResponse:
+    return await controller.add_note(conversation_id, payload, current_user)
+
+
+@router.get(
+    "/conversations/{conversation_id}/stream",
+    summary="SSE stream of real-time events for a specific conversation.",
+    status_code=status.HTTP_200_OK,
+)
+async def conversation_admin_thread_stream(
+    conversation_id: UUID,
+    controller: ConversationsControllerDep,
+    redis_client: Annotated["Redis", Depends(get_redis)],
+) -> StreamingResponse:
+    await controller.get_conversation(conversation_id)
+
+    async def _stream_with_heartbeat() -> AsyncIterator[str]:
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def _producer() -> None:
+            try:
+                async for chunk in _conversation_thread_event_stream(
+                    redis_client, conversation_id
+                ):
+                    await queue.put(chunk)
+            except asyncio.CancelledError:
+                await queue.put(None)
+                raise
+            except Exception:  # noqa: BLE001
+                await queue.put(None)
+
+        producer_task = asyncio.create_task(_producer())
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(
+                        queue.get(), timeout=_CONVERSATION_HEARTBEAT_SECONDS
+                    )
+                except TimeoutError:
+                    yield "event: ping\ndata: {}\n\n"
                     continue
                 if chunk is None:
                     break
