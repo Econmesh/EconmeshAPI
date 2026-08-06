@@ -12,6 +12,7 @@ from src.modules.support.model import (
     SupportMessageDocument,
     SupportMessageType,
     SupportTicketDocument,
+    SupportTicketSource,
     SupportTicketStatus,
 )
 from src.modules.support.schema import AdminSupportTicketListParams
@@ -26,6 +27,13 @@ _USER_VISIBLE_TYPES = [
     SupportMessageType.ADMIN_REPLY.value,
 ]
 
+_INTERNAL_SOURCE_QUERY: dict[str, Any] = {
+    "$or": [
+        {"source": SupportTicketSource.INTERNAL.value},
+        {"source": {"$exists": False}},
+    ]
+}
+
 
 class SupportTicketsRepository:
     COLLECTION: str = SupportTicketDocument.collection_name
@@ -34,10 +42,31 @@ class SupportTicketsRepository:
         self._collection: AsyncCollection = db[self.COLLECTION]
 
     async def ensure_indexes(self) -> None:
+        # Legacy unique index blocked all visitor tickets (user_id=null) from
+        # sharing ticket_number values across external/contact_request sources.
+        existing = await self._collection.index_information()
+        if "uniq_user_ticket_number" in existing:
+            await self._collection.drop_index("uniq_user_ticket_number")
+
         await self._collection.create_index(
             [("user_id", ASCENDING), ("ticket_number", ASCENDING)],
             unique=True,
-            name="uniq_user_ticket_number",
+            partialFilterExpression={"source": SupportTicketSource.INTERNAL.value},
+            name="uniq_internal_user_ticket_number",
+        )
+        await self._collection.create_index(
+            [("source", ASCENDING), ("ticket_number", ASCENDING)],
+            unique=True,
+            partialFilterExpression={"source": SupportTicketSource.EXTERNAL.value},
+            name="uniq_external_ticket_number",
+        )
+        await self._collection.create_index(
+            [("source", ASCENDING), ("ticket_number", ASCENDING)],
+            unique=True,
+            partialFilterExpression={
+                "source": SupportTicketSource.CONTACT_REQUEST.value
+            },
+            name="uniq_contact_request_ticket_number",
         )
         await self._collection.create_index(
             [("user_id", ASCENDING), ("status", ASCENDING)],
@@ -53,6 +82,10 @@ class SupportTicketsRepository:
         await self._collection.create_index(
             [("last_message_at", DESCENDING)], name="ix_last_message_at"
         )
+        await self._collection.create_index(
+            [("source", ASCENDING), ("last_message_at", DESCENDING)],
+            name="ix_source_last_message",
+        )
 
     async def create(self, doc: SupportTicketDocument) -> SupportTicketDocument:
         await self._collection.insert_one(doc.to_mongo())
@@ -63,7 +96,21 @@ class SupportTicketsRepository:
         return SupportTicketDocument.model_validate(raw) if raw else None
 
     async def next_ticket_number(self, user_id: UUID) -> int:
-        count = await self._collection.count_documents({"user_id": user_id})
+        count = await self._collection.count_documents(
+            {"user_id": user_id, **_INTERNAL_SOURCE_QUERY}
+        )
+        return count + 1
+
+    async def next_external_ticket_number(self) -> int:
+        count = await self._collection.count_documents(
+            {"source": SupportTicketSource.EXTERNAL.value}
+        )
+        return count + 1
+
+    async def next_contact_request_ticket_number(self) -> int:
+        count = await self._collection.count_documents(
+            {"source": SupportTicketSource.CONTACT_REQUEST.value}
+        )
         return count + 1
 
     async def update(
@@ -85,7 +132,7 @@ class SupportTicketsRepository:
         limit: int,
         status: SupportTicketStatus | None = None,
     ) -> list[SupportTicketDocument]:
-        query: dict[str, Any] = {"user_id": user_id}
+        query: dict[str, Any] = {"user_id": user_id, **_INTERNAL_SOURCE_QUERY}
         if status is not None:
             query["status"] = status
         cursor = (
@@ -100,7 +147,7 @@ class SupportTicketsRepository:
     async def count_by_user(
         self, user_id: UUID, *, status: SupportTicketStatus | None = None
     ) -> int:
-        query: dict[str, Any] = {"user_id": user_id}
+        query: dict[str, Any] = {"user_id": user_id, **_INTERNAL_SOURCE_QUERY}
         if status is not None:
             query["status"] = status
         return await self._collection.count_documents(query)
@@ -125,18 +172,12 @@ class SupportTicketsRepository:
     def _build_admin_filter(params: AdminSupportTicketListParams) -> dict[str, Any]:
         query: dict[str, Any] = {}
         if params.status is not None:
-            # #region agent log
-            import json, time
-            from pathlib import Path
-            _log_path = Path(__file__).resolve().parents[3] / "debug-499439.log"
-            with _log_path.open("a", encoding="utf-8") as _f:
-                _f.write(json.dumps({"sessionId": "499439", "runId": "post-fix", "hypothesisId": "A", "location": "repository.py:_build_admin_filter", "message": "status type before filter", "data": {"status": params.status, "status_type": type(params.status).__name__, "has_value_attr": hasattr(params.status, "value")}, "timestamp": int(time.time() * 1000)}) + "\n")
-            # #endregion
             query["status"] = params.status
-            # #region agent log
-            with _log_path.open("a", encoding="utf-8") as _f:
-                _f.write(json.dumps({"sessionId": "499439", "runId": "post-fix", "hypothesisId": "A", "location": "repository.py:_build_admin_filter", "message": "filter built successfully", "data": {"query_status": query["status"]}, "timestamp": int(time.time() * 1000)}) + "\n")
-            # #endregion
+        if params.source is not None:
+            if params.source == SupportTicketSource.INTERNAL:
+                query.update(_INTERNAL_SOURCE_QUERY)
+            else:
+                query["source"] = params.source
         if params.q:
             escaped = re.escape(params.q.strip())
             if escaped.isdigit():

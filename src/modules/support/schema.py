@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Self
 from uuid import UUID
 
 from fastapi import Query
-from pydantic import Field
+from pydantic import EmailStr, Field, model_validator
 
 from src.modules.support.model import (
     SupportAuthorRole,
+    SupportContactInterest,
     SupportMessageType,
+    SupportTicketSource,
     SupportTicketStatus,
 )
 from src.shared.schemas.base import APIModel
@@ -20,6 +22,29 @@ from src.shared.schemas.base import APIModel
 class SupportTicketCreate(APIModel):
     subject: str = Field(..., min_length=3, max_length=200)
     message: str = Field(..., min_length=1, max_length=5000)
+
+
+class ExternalSupportContactCreate(APIModel):
+    message: str = Field(..., min_length=1, max_length=5000)
+    email: EmailStr
+
+
+class PublicContactRequestCreate(APIModel):
+    interest: SupportContactInterest
+    name: str = Field(..., min_length=2, max_length=200)
+    company: str = Field(..., min_length=1, max_length=200)
+    position: str = Field(..., min_length=1, max_length=200)
+    email: EmailStr
+    phone: str = Field(..., min_length=8, max_length=40)
+    address: str | None = Field(default=None, max_length=500)
+    message: str | None = Field(default=None, max_length=5000)
+
+    @model_validator(mode="after")
+    def require_address_for_mri(self) -> Self:
+        if self.interest == SupportContactInterest.MRI:
+            if not self.address or not self.address.strip():
+                raise ValueError("Endereço é obrigatório para solicitação MRI.")
+        return self
 
 
 class SupportMessageCreate(APIModel):
@@ -53,7 +78,15 @@ class SupportMessageListResponse(APIModel):
 
 class SupportTicketResponse(APIModel):
     id: UUID
-    user_id: UUID
+    source: SupportTicketSource = SupportTicketSource.INTERNAL
+    user_id: UUID | None = None
+    visitor_email: str | None = None
+    visitor_name: str | None = None
+    company: str | None = None
+    position: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    interest: SupportContactInterest | None = None
     ticket_number: int
     subject: str
     status: SupportTicketStatus
@@ -85,6 +118,7 @@ class AdminSupportTicketListParams(APIModel):
     page: int = 1
     page_size: int = 20
     status: SupportTicketStatus | None = None
+    source: SupportTicketSource | None = None
     q: str | None = None
 
     @classmethod
@@ -93,17 +127,10 @@ class AdminSupportTicketListParams(APIModel):
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100),
         status: SupportTicketStatus | None = Query(default=None),
+        source: SupportTicketSource | None = Query(default=None),
         q: str | None = Query(default=None, max_length=200),
     ) -> AdminSupportTicketListParams:
-        params = cls(page=page, page_size=page_size, status=status, q=q)
-        # #region agent log
-        import json, time
-        from pathlib import Path
-        _log_path = Path(__file__).resolve().parents[3] / "debug-499439.log"
-        with _log_path.open("a", encoding="utf-8") as _f:
-            _f.write(json.dumps({"sessionId": "499439", "runId": "post-fix", "hypothesisId": "B", "location": "schema.py:AdminSupportTicketListParams.as_query", "message": "status after APIModel construction", "data": {"query_status": status, "query_status_type": type(status).__name__ if status is not None else None, "params_status": params.status, "params_status_type": type(params.status).__name__ if params.status is not None else None}, "timestamp": int(time.time() * 1000)}) + "\n")
-        # #endregion
-        return params
+        return cls(page=page, page_size=page_size, status=status, source=source, q=q)
 
 
 class UserSupportTicketListParams(APIModel):
@@ -137,6 +164,8 @@ class SupportStreamEvent(APIModel):
 
 __all__ = [
     "AdminSupportTicketListParams",
+    "ExternalSupportContactCreate",
+    "PublicContactRequestCreate",
     "SupportInternalNoteCreate",
     "SupportMessageCreate",
     "SupportMessageListResponse",

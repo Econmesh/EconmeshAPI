@@ -73,6 +73,7 @@ class NotificationKind(StrEnum):
     GENERAL = "general"
     SUPPORT = "support"
     AGREEMENT = "agreement"
+    CONVERSATION = "conversation"
 
 
 class UserNotificationDocument(DomainDocument):

@@ -11,6 +11,9 @@ from pydantic import Field
 
 from src.shared.schemas.base import DomainDocument
 
+# Sentinel author id for messages sent by unauthenticated site visitors.
+VISITOR_AUTHOR_ID = UUID("00000000-0000-0000-0000-000000000001")
+
 
 class SupportTicketStatus(StrEnum):
     OPEN = "open"
@@ -18,9 +21,21 @@ class SupportTicketStatus(StrEnum):
     CLOSED = "closed"
 
 
+class SupportTicketSource(StrEnum):
+    INTERNAL = "internal"
+    EXTERNAL = "external"
+    CONTACT_REQUEST = "contact_request"
+
+
+class SupportContactInterest(StrEnum):
+    DMC = "dmc"
+    MRI = "mri"
+
+
 class SupportAuthorRole(StrEnum):
     USER = "user"
     ADMIN = "admin"
+    VISITOR = "visitor"
 
 
 class SupportMessageType(StrEnum):
@@ -29,10 +44,26 @@ class SupportMessageType(StrEnum):
     INTERNAL_NOTE = "internal_note"
 
 
+VISITOR_TICKET_SOURCES = frozenset(
+    {
+        SupportTicketSource.EXTERNAL,
+        SupportTicketSource.CONTACT_REQUEST,
+    }
+)
+
+
 class SupportTicketDocument(DomainDocument):
     collection_name: ClassVar[str] = "support_tickets"
 
-    user_id: UUID
+    source: SupportTicketSource = SupportTicketSource.INTERNAL
+    user_id: UUID | None = None
+    visitor_email: str | None = None
+    visitor_name: str | None = None
+    company: str | None = None
+    position: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    interest: SupportContactInterest | None = None
     ticket_number: int
     subject: str
     status: SupportTicketStatus = SupportTicketStatus.OPEN
@@ -55,9 +86,13 @@ class SupportMessageDocument(DomainDocument):
 
 
 __all__ = [
+    "VISITOR_AUTHOR_ID",
+    "VISITOR_TICKET_SOURCES",
     "SupportAuthorRole",
+    "SupportContactInterest",
     "SupportMessageDocument",
     "SupportMessageType",
     "SupportTicketDocument",
+    "SupportTicketSource",
     "SupportTicketStatus",
 ]

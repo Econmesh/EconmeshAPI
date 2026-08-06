@@ -9,16 +9,22 @@ from src.core.exceptions import ForbiddenError, NotFoundError, ValidationAppErro
 from src.infrastructure.realtime.support_pubsub import SupportRealtimePublisher
 from src.modules.auth.model import UserDocument
 from src.modules.support.model import (
+    VISITOR_AUTHOR_ID,
+    VISITOR_TICKET_SOURCES,
     SupportAuthorRole,
+    SupportContactInterest,
     SupportMessageDocument,
     SupportMessageType,
     SupportTicketDocument,
+    SupportTicketSource,
     SupportTicketStatus,
 )
 from src.modules.support.notification_service import SupportNotificationService
 from src.modules.support.repository import SupportMessagesRepository, SupportTicketsRepository
 from src.modules.support.schema import (
     AdminSupportTicketListParams,
+    ExternalSupportContactCreate,
+    PublicContactRequestCreate,
     SupportInternalNoteCreate,
     SupportMessageCreate,
     SupportMessageListResponse,
@@ -30,6 +36,11 @@ from src.modules.support.schema import (
     SupportTicketResponse,
     UserSupportTicketListParams,
 )
+
+_CONTACT_INTEREST_LABELS = {
+    SupportContactInterest.DMC: "Solicitação DMC",
+    SupportContactInterest.MRI: "Visita Agente de Circularidade",
+}
 from src.shared.constants.roles import Role
 from src.shared.utils.time import utcnow
 
@@ -52,6 +63,39 @@ def _message_to_response(
         read_at=doc.read_at,
         created_at=doc.created_at,
     )
+
+
+def _subject_from_message(message: str, *, max_len: int = 80) -> str:
+    text = message.strip().replace("\n", " ")
+    if len(text) <= max_len:
+        return text
+    return f"{text[: max_len - 1]}…"
+
+
+def _is_visitor_ticket(ticket: SupportTicketDocument) -> bool:
+    return ticket.source in VISITOR_TICKET_SOURCES
+
+
+def _contact_request_subject(payload: PublicContactRequestCreate) -> str:
+    interest_label = _CONTACT_INTEREST_LABELS[payload.interest]
+    return f"{interest_label} — {payload.name} ({payload.company})"
+
+
+def _contact_request_message_body(payload: PublicContactRequestCreate) -> str:
+    interest_label = _CONTACT_INTEREST_LABELS[payload.interest]
+    lines = [
+        f"Interesse: {interest_label}",
+        f"Nome: {payload.name}",
+        f"Empresa: {payload.company}",
+        f"Cargo: {payload.position}",
+        f"E-mail: {payload.email}",
+        f"Telefone: {payload.phone}",
+    ]
+    if payload.address and payload.address.strip():
+        lines.append(f"Endereço: {payload.address.strip()}")
+    if payload.message and payload.message.strip():
+        lines.extend(["", "Mensagem:", payload.message.strip()])
+    return "\n".join(lines)
 
 
 def _message_event_payload(response: SupportMessageResponse) -> dict[str, object]:
@@ -121,7 +165,15 @@ class SupportService:
         )
         return SupportTicketResponse(
             id=doc.id,
+            source=doc.source,
             user_id=doc.user_id,
+            visitor_email=doc.visitor_email,
+            visitor_name=doc.visitor_name,
+            company=doc.company,
+            position=doc.position,
+            phone=doc.phone,
+            address=doc.address,
+            interest=doc.interest,
             ticket_number=doc.ticket_number,
             subject=doc.subject,
             status=doc.status,
@@ -180,6 +232,8 @@ class SupportService:
         ticket = await self._tickets.get_by_id(ticket_id)
         if ticket is None:
             raise NotFoundError("Ticket not found.")
+        if _is_visitor_ticket(ticket):
+            raise ForbiddenError("You do not have access to this ticket.")
         if ticket.user_id != user_id:
             raise ForbiddenError("You do not have access to this ticket.")
         return ticket
@@ -200,6 +254,7 @@ class SupportService:
         now = utcnow()
         ticket_number = await self._tickets.next_ticket_number(user_id)
         ticket = SupportTicketDocument(
+            source=SupportTicketSource.INTERNAL,
             user_id=user_id,
             ticket_number=ticket_number,
             subject=payload.subject,
@@ -236,6 +291,111 @@ class SupportService:
         )
         await self._notifications.notify_admins_new_ticket(
             ticket, user_name=user.name or user.email or "Usuário"
+        )
+        return await self._ticket_response(ticket)
+
+    async def create_external_contact(
+        self, payload: ExternalSupportContactCreate
+    ) -> SupportTicketResponse:
+        now = utcnow()
+        ticket_number = await self._tickets.next_external_ticket_number()
+        subject = _subject_from_message(payload.message)
+        ticket = SupportTicketDocument(
+            source=SupportTicketSource.EXTERNAL,
+            user_id=None,
+            visitor_email=str(payload.email),
+            ticket_number=ticket_number,
+            subject=subject,
+            status=SupportTicketStatus.OPEN,
+            last_message_at=now,
+        )
+        await self._tickets.create(ticket)
+
+        message = SupportMessageDocument(
+            ticket_id=ticket.id,
+            author_id=VISITOR_AUTHOR_ID,
+            author_role=SupportAuthorRole.VISITOR,
+            message_type=SupportMessageType.USER_MESSAGE,
+            body=payload.message,
+        )
+        await self._messages.create(message)
+
+        msg_response = _message_to_response(message, author_name=payload.email)
+        event_data = {
+            "ticket_id": str(ticket.id),
+            "ticket_number": ticket.ticket_number,
+            "message_id": str(message.id),
+            "message_type": message.message_type.value,
+            "message": _message_event_payload(msg_response),
+            "source": SupportTicketSource.EXTERNAL.value,
+        }
+        await self._publish(
+            ticket_id=ticket.id,
+            to_admins=True,
+            event_type="ticket_created",
+            data=event_data,
+        )
+        await self._notifications.notify_admins_external_contact(
+            ticket,
+            visitor_email=str(payload.email),
+            message_preview=payload.message,
+        )
+        return await self._ticket_response(ticket)
+
+    async def create_contact_request(
+        self, payload: PublicContactRequestCreate
+    ) -> SupportTicketResponse:
+        now = utcnow()
+        ticket_number = await self._tickets.next_contact_request_ticket_number()
+        subject = _contact_request_subject(payload)
+        body = _contact_request_message_body(payload)
+        ticket = SupportTicketDocument(
+            source=SupportTicketSource.CONTACT_REQUEST,
+            user_id=None,
+            visitor_email=str(payload.email),
+            visitor_name=payload.name.strip(),
+            company=payload.company.strip(),
+            position=payload.position.strip(),
+            phone=payload.phone.strip(),
+            address=payload.address.strip() if payload.address else None,
+            interest=payload.interest,
+            ticket_number=ticket_number,
+            subject=subject,
+            status=SupportTicketStatus.OPEN,
+            last_message_at=now,
+        )
+        await self._tickets.create(ticket)
+
+        message = SupportMessageDocument(
+            ticket_id=ticket.id,
+            author_id=VISITOR_AUTHOR_ID,
+            author_role=SupportAuthorRole.VISITOR,
+            message_type=SupportMessageType.USER_MESSAGE,
+            body=body,
+        )
+        await self._messages.create(message)
+
+        author_name = payload.name.strip() or str(payload.email)
+        msg_response = _message_to_response(message, author_name=author_name)
+        event_data = {
+            "ticket_id": str(ticket.id),
+            "ticket_number": ticket.ticket_number,
+            "message_id": str(message.id),
+            "message_type": message.message_type.value,
+            "message": _message_event_payload(msg_response),
+            "source": SupportTicketSource.CONTACT_REQUEST.value,
+        }
+        await self._publish(
+            ticket_id=ticket.id,
+            to_admins=True,
+            event_type="ticket_created",
+            data=event_data,
+        )
+        await self._notifications.notify_admins_contact_request(
+            ticket,
+            visitor_name=payload.name.strip(),
+            visitor_email=str(payload.email),
+            interest_label=_CONTACT_INTEREST_LABELS[payload.interest],
         )
         return await self._ticket_response(ticket)
 
@@ -359,17 +519,19 @@ class SupportService:
             message_types=[SupportMessageType.USER_MESSAGE],
         )
         if read_ids:
-            await self._publish(
-                user_id=ticket.user_id,
-                ticket_id=ticket.id,
-                to_admins=True,
-                event_type="messages_read",
-                data={
+            publish_kwargs: dict[str, object] = {
+                "ticket_id": ticket.id,
+                "to_admins": True,
+                "event_type": "messages_read",
+                "data": {
                     "ticket_id": str(ticket.id),
                     "message_ids": [str(mid) for mid in read_ids],
                     "reader": "admin",
                 },
-            )
+            }
+            if ticket.user_id is not None:
+                publish_kwargs["user_id"] = ticket.user_id
+            await self._publish(**publish_kwargs)  # type: ignore[arg-type]
         return await self.list_admin_messages(ticket.id)
 
     # -------------------------------------------------------------- admin API
@@ -392,8 +554,23 @@ class SupportService:
         if ticket is None:
             raise NotFoundError("Ticket not found.")
         base = await self._ticket_response(ticket)
-        owner = await self._auth.get_by_id(ticket.user_id)
-        user_online = await self._presence.is_online(ticket.user_id)
+        if _is_visitor_ticket(ticket):
+            if ticket.source == SupportTicketSource.CONTACT_REQUEST:
+                user_name = ticket.visitor_name or "Solicitação de contato"
+            else:
+                user_name = "Visitante (site)"
+            return SupportTicketDetailResponse(
+                **base.model_dump(),
+                user_name=user_name,
+                user_email=ticket.visitor_email,
+                user_online=False,
+            )
+        owner = await self._auth.get_by_id(ticket.user_id) if ticket.user_id else None
+        user_online = (
+            await self._presence.is_online(ticket.user_id)
+            if ticket.user_id is not None
+            else False
+        )
         return SupportTicketDetailResponse(
             **base.model_dump(),
             user_name=owner.name if owner else None,
@@ -406,14 +583,41 @@ class SupportService:
         if ticket is None:
             raise NotFoundError("Ticket not found.")
         messages = await self._messages.list_by_ticket(ticket_id, user_visible_only=False)
-        author_ids = list({m.author_id for m in messages})
+        items = await self._resolve_message_author_names(messages, ticket)
+        return SupportMessageListResponse(items=items, total=len(items))
+
+    async def _resolve_message_author_names(
+        self,
+        messages: list[SupportMessageDocument],
+        ticket: SupportTicketDocument,
+    ) -> list[SupportMessageResponse]:
+        author_ids = [
+            m.author_id
+            for m in messages
+            if m.author_role != SupportAuthorRole.VISITOR
+        ]
         users = await self._auth.get_by_ids(author_ids)
         name_map = {u.id: (u.name or u.email) for u in users}
-        items = [
-            _message_to_response(m, author_name=name_map.get(m.author_id))
-            for m in messages
-        ]
-        return SupportMessageListResponse(items=items, total=len(items))
+        items: list[SupportMessageResponse] = []
+        for message in messages:
+            if message.author_role == SupportAuthorRole.VISITOR:
+                items.append(
+                    _message_to_response(
+                        message,
+                        author_name=(
+                            ticket.visitor_name
+                            or ticket.visitor_email
+                            or "Visitante"
+                        ),
+                    )
+                )
+            else:
+                items.append(
+                    _message_to_response(
+                        message, author_name=name_map.get(message.author_id)
+                    )
+                )
+        return items
 
     async def add_admin_reply(
         self, ticket_id: UUID, payload: SupportMessageCreate, *, firebase_uid: str
@@ -455,17 +659,22 @@ class SupportService:
             "message": _message_event_payload(msg_response),
         }
         await self._publish(
-            user_id=ticket.user_id,
+            user_id=ticket.user_id if ticket.user_id is not None else None,
             ticket_id=ticket.id,
             to_admins=True,
             event_type="message_created",
             data=event_data,
         )
-        owner = await self._auth.get_by_id(ticket.user_id)
-        if owner is not None:
-            await self._notifications.notify_user_admin_reply(
-                ticket, owner, preview=payload.body
+        if _is_visitor_ticket(ticket) and ticket.visitor_email:
+            await self._notifications.notify_visitor_admin_reply(
+                ticket, email=ticket.visitor_email, preview=payload.body
             )
+        else:
+            owner = await self._auth.get_by_id(ticket.user_id) if ticket.user_id else None
+            if owner is not None:
+                await self._notifications.notify_user_admin_reply(
+                    ticket, owner, preview=payload.body
+                )
         return _message_to_response(
             message, author_name=admin.name or admin.email
         )
@@ -557,19 +766,26 @@ class SupportService:
         )
         ticket = updated or ticket
 
-        await self._publish(
-            user_id=ticket.user_id,
-            ticket_id=ticket.id,
-            to_admins=True,
-            event_type="ticket_closed",
-            data={
+        publish_kwargs: dict[str, object] = {
+            "ticket_id": ticket.id,
+            "to_admins": True,
+            "event_type": "ticket_closed",
+            "data": {
                 "ticket_id": str(ticket.id),
                 "ticket_number": ticket.ticket_number,
             },
-        )
-        owner = await self._auth.get_by_id(ticket.user_id)
-        if owner is not None:
-            await self._notifications.notify_user_ticket_closed(ticket, owner)
+        }
+        if ticket.user_id is not None:
+            publish_kwargs["user_id"] = ticket.user_id
+        await self._publish(**publish_kwargs)  # type: ignore[arg-type]
+        if _is_visitor_ticket(ticket) and ticket.visitor_email:
+            await self._notifications.notify_visitor_ticket_closed(
+                ticket, email=ticket.visitor_email
+            )
+        else:
+            owner = await self._auth.get_by_id(ticket.user_id) if ticket.user_id else None
+            if owner is not None:
+                await self._notifications.notify_user_ticket_closed(ticket, owner)
         return await self._ticket_response(ticket)
 
     async def reopen_ticket(
@@ -591,16 +807,18 @@ class SupportService:
             },
         )
         ticket = updated or ticket
-        await self._publish(
-            user_id=ticket.user_id,
-            ticket_id=ticket.id,
-            to_admins=True,
-            event_type="ticket_reopened",
-            data={
+        publish_kwargs: dict[str, object] = {
+            "ticket_id": ticket.id,
+            "to_admins": True,
+            "event_type": "ticket_reopened",
+            "data": {
                 "ticket_id": str(ticket.id),
                 "ticket_number": ticket.ticket_number,
             },
-        )
+        }
+        if ticket.user_id is not None:
+            publish_kwargs["user_id"] = ticket.user_id
+        await self._publish(**publish_kwargs)  # type: ignore[arg-type]
         return await self._ticket_response(ticket)
 
 
