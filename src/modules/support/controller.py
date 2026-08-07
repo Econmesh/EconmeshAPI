@@ -6,6 +6,8 @@ from uuid import UUID
 
 from src.modules.support.schema import (
     AdminSupportTicketListParams,
+    ExternalSupportContactCreate,
+    PublicContactRequestCreate,
     SupportInternalNoteCreate,
     SupportMessageCreate,
     SupportMessageListResponse,
@@ -75,6 +77,23 @@ class UserSupportController:
         )
 
 
+class PublicSupportController:
+    def __init__(self, service: SupportService) -> None:
+        self._service = service
+
+    async def submit_contact(
+        self, payload: ExternalSupportContactCreate
+    ) -> MessageResponse:
+        await self._service.create_external_contact(payload)
+        return MessageResponse(message="Solicitação recebida com sucesso.")
+
+    async def submit_contact_request(
+        self, payload: PublicContactRequestCreate
+    ) -> MessageResponse:
+        await self._service.create_contact_request(payload)
+        return MessageResponse(message="Solicitação recebida com sucesso.")
+
+
 class AdminSupportController:
     def __init__(self, service: SupportService) -> None:
         self._service = service
@@ -131,4 +150,4 @@ class AdminSupportController:
         return MessageResponse(message="ok")
 
 
-__all__ = ["AdminSupportController", "UserSupportController"]
+__all__ = ["AdminSupportController", "PublicSupportController", "UserSupportController"]

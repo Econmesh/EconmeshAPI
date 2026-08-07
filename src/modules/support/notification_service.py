@@ -53,17 +53,19 @@ class SupportNotificationService:
         ticket: SupportTicketDocument,
         event: str,
     ) -> None:
+        metadata: dict[str, str] = {
+            "ticket_id": str(ticket.id),
+            "ticket_number": str(ticket.ticket_number),
+            "event": event,
+            "source": str(ticket.source),
+        }
         doc = UserNotificationDocument(
             user_id=user.id,
             title=title,
             body=body,
             channel=NotificationChannel.IN_APP,
             kind=NotificationKind.SUPPORT,
-            metadata={
-                "ticket_id": str(ticket.id),
-                "ticket_number": str(ticket.ticket_number),
-                "event": event,
-            },
+            metadata=metadata,
         )
         created = await self._user_notifications_repo.create(doc)
         if self._notification_realtime is not None:
@@ -121,6 +123,24 @@ class SupportNotificationService:
                 user, subject=title, body=body, action_url=action_url
             )
 
+    async def _notify_admin_in_app_and_email(
+        self,
+        admin: UserDocument,
+        *,
+        title: str,
+        body: str,
+        ticket: SupportTicketDocument,
+        event: str,
+        action_url: str,
+    ) -> None:
+        """Always deliver in-app notification and email (used for external contact)."""
+        await self._deliver_in_app(
+            admin, title=title, body=body, ticket=ticket, event=event
+        )
+        await self._send_email(
+            admin, subject=title, body=body, action_url=action_url
+        )
+
     async def notify_admins_new_ticket(
         self, ticket: SupportTicketDocument, *, user_name: str
     ) -> None:
@@ -134,6 +154,62 @@ class SupportNotificationService:
         )
         for admin in admins:
             await self._notify(
+                admin,
+                title=title,
+                body=body,
+                ticket=ticket,
+                event="ticket_created",
+                action_url=admin_url,
+            )
+
+    async def notify_admins_external_contact(
+        self,
+        ticket: SupportTicketDocument,
+        *,
+        visitor_email: str,
+        message_preview: str,
+    ) -> None:
+        """Notify all admins about a new public-site contact (in-app + email always)."""
+        label = _format_ticket_label(ticket)
+        title = f"Novo contato do site público {label}"
+        body = f"{visitor_email}: {message_preview[:200]}"
+        admins = await self._auth_repo.list_admins()
+        admin_url = (
+            f"{self._settings.FRONTEND_ADMIN_URL.rstrip('/')}"
+            f"/dashboard/suporte/{ticket.id}"
+        )
+        for admin in admins:
+            await self._notify_admin_in_app_and_email(
+                admin,
+                title=title,
+                body=body,
+                ticket=ticket,
+                event="ticket_created",
+                action_url=admin_url,
+            )
+
+    async def notify_admins_contact_request(
+        self,
+        ticket: SupportTicketDocument,
+        *,
+        visitor_name: str,
+        visitor_email: str,
+        interest_label: str,
+    ) -> None:
+        """Notify all admins about a DMC/MRI contact request (in-app + email always)."""
+        label = _format_ticket_label(ticket)
+        title = f"Nova solicitação de contato {label}"
+        company = ticket.company or "—"
+        body = (
+            f"{interest_label}: {visitor_name} ({company}) — {visitor_email}"
+        )
+        admins = await self._auth_repo.list_admins()
+        admin_url = (
+            f"{self._settings.FRONTEND_ADMIN_URL.rstrip('/')}"
+            f"/dashboard/suporte/{ticket.id}"
+        )
+        for admin in admins:
+            await self._notify_admin_in_app_and_email(
                 admin,
                 title=title,
                 body=body,
@@ -200,6 +276,38 @@ class SupportNotificationService:
             event="ticket_closed",
             action_url=app_url,
         )
+
+    async def notify_visitor_admin_reply(
+        self, ticket: SupportTicketDocument, *, email: str, preview: str
+    ) -> None:
+        label = _format_ticket_label(ticket)
+        title = f"Resposta da Econmesh — chamado {label}"
+        body = preview[:500]
+        try:
+            await self._email.send_support_notification(
+                to=email,
+                subject=title,
+                body=body,
+                action_url="https://econmesh.com.br",
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("support_visitor_email_failed", email=email)
+
+    async def notify_visitor_ticket_closed(
+        self, ticket: SupportTicketDocument, *, email: str
+    ) -> None:
+        label = _format_ticket_label(ticket)
+        title = f"Chamado {label} encerrado"
+        body = "Sua solicitação de contato foi encerrada pela nossa equipe."
+        try:
+            await self._email.send_support_notification(
+                to=email,
+                subject=title,
+                body=body,
+                action_url="https://econmesh.com.br",
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("support_visitor_email_failed", email=email)
 
 
 __all__ = ["SupportNotificationService"]

@@ -12,7 +12,9 @@ _DEFAULT_HEADERS: dict[str, str] = {
     "Referrer-Policy": "no-referrer",
     "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
     "Cross-Origin-Opener-Policy": "same-origin",
-    "Cross-Origin-Resource-Policy": "same-site",
+    # cross-origin: browser SPAs call this API via CORS from another origin/port
+    # (e.g. localhost:3002 → 127.0.0.1:8000). same-site would block those reads.
+    "Cross-Origin-Resource-Policy": "cross-origin",
 }
 
 _STRICT_CSP = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"

@@ -252,8 +252,9 @@ class UserNotificationsRepository:
         for doc in docs:
             try:
                 validated.append(UserNotificationDocument.model_validate(doc))
-            except Exception as exc:  # noqa: BLE001s
-                raise
+            except Exception:  # noqa: BLE001
+                # Skip corrupt/legacy rows so one bad document cannot break the inbox.
+                continue
         return validated
 
     async def count_for_user(

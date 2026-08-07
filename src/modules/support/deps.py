@@ -11,7 +11,7 @@ from src.infrastructure.realtime.redis_pubsub import NotificationRealtimePublish
 from src.infrastructure.realtime.support_pubsub import SupportRealtimePublisher
 from src.modules.auth.repository import AuthRepository
 from src.modules.notifications.repository import UserNotificationsRepository
-from src.modules.support.controller import AdminSupportController, UserSupportController
+from src.modules.support.controller import AdminSupportController, PublicSupportController, UserSupportController
 from src.modules.support.notification_service import SupportNotificationService
 from src.modules.support.repository import SupportMessagesRepository, SupportTicketsRepository
 from src.modules.support.service import SupportService
@@ -47,6 +47,10 @@ def build_support_service(db: AsyncDatabase, redis_client: Redis) -> SupportServ
     )
 
 
+def build_public_support_controller(db: AsyncDatabase, redis_client: Redis) -> PublicSupportController:
+    return PublicSupportController(build_support_service(db, redis_client))
+
+
 def build_user_support_controller(db: AsyncDatabase, redis_client: Redis) -> UserSupportController:
     return UserSupportController(build_support_service(db, redis_client))
 
@@ -57,6 +61,7 @@ def build_admin_support_controller(db: AsyncDatabase, redis_client: Redis) -> Ad
 
 __all__ = [
     "build_admin_support_controller",
+    "build_public_support_controller",
     "build_support_service",
     "build_user_support_controller",
 ]
