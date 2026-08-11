@@ -26,6 +26,8 @@ from src.modules.conversations.repository import (
     ConversationMessagesRepository,
     ConversationsRepository,
 )
+from src.modules.contract_proposals.repository import ContractProposalsRepository
+from src.modules.contract_sections.repository import ContractSectionsRepository
 from src.modules.support.repository import SupportMessagesRepository, SupportTicketsRepository
 from src.modules.users.repository import UsersRepository
 
@@ -52,6 +54,8 @@ async def _main() -> None:
         await SupportMessagesRepository(mongo.db).ensure_indexes()
         await ConversationsRepository(mongo.db).ensure_indexes()
         await ConversationMessagesRepository(mongo.db).ensure_indexes()
+        await ContractSectionsRepository(mongo.db).ensure_indexes()
+        await ContractProposalsRepository(mongo.db).ensure_indexes()
         await UsersRepository(mongo.db).ensure_indexes()
         logger.info("indexes_done")
     finally:

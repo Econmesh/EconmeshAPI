@@ -155,6 +155,8 @@ class AgreementResponse(APIModel):
     signed_file: AgreementFileResponse | None = None
     audit_report_file: AgreementFileResponse | None = None
     certificate_file: AgreementFileResponse | None = None
+    chat_audit_report_file: AgreementFileResponse | None = None
+    opportunity_audit_report_file: AgreementFileResponse | None = None
     participants: list[ParticipantResponse]
     fields: list[FieldResponse]
     verification_code: str

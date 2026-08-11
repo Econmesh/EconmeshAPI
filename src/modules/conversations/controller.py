@@ -6,6 +6,7 @@ from uuid import UUID
 
 from src.modules.conversations.schema import (
     AdminConversationListParams,
+    ConversationCloseRequest,
     ConversationCreate,
     ConversationDetailResponse,
     ConversationInternalNoteCreate,
@@ -13,6 +14,10 @@ from src.modules.conversations.schema import (
     ConversationMessageCreate,
     ConversationMessageListResponse,
     ConversationMessageResponse,
+    ConversationRequestNewContact,
+    ConversationRequestReopen,
+    ConversationRespondNewContact,
+    ConversationRespondReopen,
     ConversationResponse,
     UserConversationListParams,
 )
@@ -67,6 +72,63 @@ class UserConversationsController:
     ) -> ConversationMessageListResponse:
         return await self._service.mark_user_messages_read(
             conversation_id, firebase_uid=current_user.uid
+        )
+
+    async def close(
+        self,
+        conversation_id: UUID,
+        payload: ConversationCloseRequest,
+        current_user: CurrentUser,
+    ) -> ConversationResponse:
+        return await self._service.close_conversation(
+            conversation_id, payload, firebase_uid=current_user.uid
+        )
+
+    async def reopen(
+        self, conversation_id: UUID, current_user: CurrentUser
+    ) -> ConversationResponse:
+        return await self._service.reopen_conversation(
+            conversation_id, firebase_uid=current_user.uid
+        )
+
+    async def request_reopen(
+        self,
+        conversation_id: UUID,
+        payload: ConversationRequestReopen,
+        current_user: CurrentUser,
+    ) -> ConversationResponse:
+        return await self._service.request_reopen(
+            conversation_id, payload, firebase_uid=current_user.uid
+        )
+
+    async def respond_reopen(
+        self,
+        conversation_id: UUID,
+        payload: ConversationRespondReopen,
+        current_user: CurrentUser,
+    ) -> ConversationResponse:
+        return await self._service.respond_reopen(
+            conversation_id, payload, firebase_uid=current_user.uid
+        )
+
+    async def request_new_contact(
+        self,
+        conversation_id: UUID,
+        payload: ConversationRequestNewContact,
+        current_user: CurrentUser,
+    ) -> ConversationResponse:
+        return await self._service.request_new_contact(
+            conversation_id, payload, firebase_uid=current_user.uid
+        )
+
+    async def respond_new_contact(
+        self,
+        conversation_id: UUID,
+        payload: ConversationRespondNewContact,
+        current_user: CurrentUser,
+    ) -> ConversationResponse:
+        return await self._service.respond_new_contact(
+            conversation_id, payload, firebase_uid=current_user.uid
         )
 
 

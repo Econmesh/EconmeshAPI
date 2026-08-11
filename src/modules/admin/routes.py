@@ -9,7 +9,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from src.modules.admin.controller import AdminController
@@ -41,6 +41,7 @@ from src.modules.auth.service import AuthService
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.companies.schema import CompanyResponse, CompanyUpdate
 from src.modules.companies.service import CompaniesService
+from src.modules.conversations.repository import ConversationMessagesRepository
 from src.modules.opportunities.repository import OpportunitiesRepository
 from src.modules.opportunities.schema import (
     OpportunityListParams,
@@ -56,6 +57,23 @@ from src.modules.notifications.deps import (
 from src.modules.notifications.controller import (
     AdminNotificationCampaignsController,
     AdminNotificationGroupsController,
+)
+from src.modules.contract_sections.controller import AdminContractSectionsController
+from src.modules.contract_sections.deps import build_admin_contract_sections_controller
+from src.modules.contract_sections.model import SectionAppliesTo
+from src.modules.contract_sections.schema import (
+    ContractSectionCreate,
+    ContractSectionListResponse,
+    ContractSectionReorder,
+    ContractSectionResponse,
+    ContractSectionUpdate,
+    MinutaStructureResponse,
+)
+from src.modules.contract_proposals.controller import ContractProposalsController
+from src.modules.contract_proposals.deps import build_admin_contract_proposals_controller
+from src.modules.contract_proposals.schema import (
+    ContractProposalListResponse,
+    ContractProposalResponse,
 )
 from src.modules.notifications.repository import UserNotificationsRepository
 from src.modules.notifications.schema import (
@@ -178,6 +196,8 @@ def _build_agreements_controller(
         CompaniesRepository(db),
         UsersRepository(db),
         notifications=notifications,
+        messages_repository=ConversationMessagesRepository(db),
+        opportunities_repository=OpportunitiesRepository(db),
     )
     return AgreementsController(service)
 
@@ -530,6 +550,155 @@ async def delete_notification_group(
 ) -> MessageResponse:
     await controller.delete(group_id)
     return MessageResponse(message="Notification group deleted successfully.")
+
+
+# ------------------------------------------------------- contract sections
+def _build_contract_sections_controller(
+    db: Annotated["AsyncDatabase", Depends(get_db)],
+) -> AdminContractSectionsController:
+    return build_admin_contract_sections_controller(db)
+
+
+ContractSectionsControllerDep = Annotated[
+    AdminContractSectionsController, Depends(_build_contract_sections_controller)
+]
+
+
+@router.get(
+    "/contract-sections",
+    response_model=ContractSectionListResponse,
+    summary="List contract section templates.",
+)
+async def list_contract_sections(
+    controller: ContractSectionsControllerDep,
+    pagination: Annotated[PaginationParams, Depends(PaginationParams.as_query)],
+    contract_type: SectionAppliesTo | None = Query(default=None),
+    active_only: bool = Query(default=False),
+) -> ContractSectionListResponse:
+    return await controller.list(
+        page=pagination.page,
+        page_size=pagination.page_size,
+        contract_type=contract_type,
+        active_only=active_only,
+    )
+
+
+@router.get(
+    "/contract-sections/structure",
+    response_model=MinutaStructureResponse,
+    summary="Get full minuta section structure (system + admin).",
+)
+async def get_contract_sections_structure(
+    controller: ContractSectionsControllerDep,
+    contract_type: SectionAppliesTo | None = Query(default=None),
+) -> MinutaStructureResponse:
+    return await controller.get_structure(contract_type=contract_type)
+
+
+@router.put(
+    "/contract-sections/reorder",
+    response_model=ContractSectionListResponse,
+    summary="Reorder admin-managed contract section templates.",
+)
+async def reorder_contract_sections(
+    payload: ContractSectionReorder,
+    controller: ContractSectionsControllerDep,
+) -> ContractSectionListResponse:
+    return await controller.reorder(payload)
+
+
+@router.post(
+    "/contract-sections",
+    response_model=ContractSectionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a contract section template.",
+)
+async def create_contract_section(
+    payload: ContractSectionCreate,
+    controller: ContractSectionsControllerDep,
+    admin_id: AdminUserIdDep,
+) -> ContractSectionResponse:
+    return await controller.create(payload, created_by=admin_id)
+
+
+@router.get(
+    "/contract-sections/{section_id}",
+    response_model=ContractSectionResponse,
+    summary="Get a contract section template.",
+)
+async def get_contract_section(
+    section_id: UUID,
+    controller: ContractSectionsControllerDep,
+) -> ContractSectionResponse:
+    return await controller.get(section_id)
+
+
+@router.patch(
+    "/contract-sections/{section_id}",
+    response_model=ContractSectionResponse,
+    summary="Update a contract section template.",
+)
+async def update_contract_section(
+    section_id: UUID,
+    payload: ContractSectionUpdate,
+    controller: ContractSectionsControllerDep,
+) -> ContractSectionResponse:
+    return await controller.update(section_id, payload)
+
+
+@router.delete(
+    "/contract-sections/{section_id}",
+    response_model=MessageResponse,
+    summary="Delete a contract section template.",
+)
+async def delete_contract_section(
+    section_id: UUID,
+    controller: ContractSectionsControllerDep,
+) -> MessageResponse:
+    await controller.delete(section_id)
+    return MessageResponse(message="Contract section deleted successfully.")
+
+
+# ------------------------------------------------------ contract proposals
+def _build_contract_proposals_controller(
+    db: Annotated["AsyncDatabase", Depends(get_db)],
+    redis_client: Annotated["Redis", Depends(get_redis)],
+) -> ContractProposalsController:
+    return build_admin_contract_proposals_controller(db, redis_client)
+
+
+ContractProposalsControllerDep = Annotated[
+    ContractProposalsController, Depends(_build_contract_proposals_controller)
+]
+
+
+@router.get(
+    "/contract-proposals",
+    response_model=ContractProposalListResponse,
+    summary="List all contract proposals (minutas).",
+)
+async def admin_list_contract_proposals(
+    controller: ContractProposalsControllerDep,
+    pagination: Annotated[PaginationParams, Depends(PaginationParams.as_query)],
+    conversation_id: UUID | None = Query(default=None),
+) -> ContractProposalListResponse:
+    return await controller.admin_list(
+        page=pagination.page,
+        page_size=pagination.page_size,
+        conversation_id=conversation_id,
+    )
+
+
+@router.get(
+    "/contract-proposals/{proposal_id}",
+    response_model=ContractProposalResponse,
+    summary="Get a contract proposal (minuta).",
+)
+async def admin_get_contract_proposal(
+    proposal_id: UUID,
+    controller: ContractProposalsControllerDep,
+) -> ContractProposalResponse:
+    return await controller.admin_get(proposal_id)
 
 
 @router.get(

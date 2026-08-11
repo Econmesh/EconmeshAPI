@@ -159,10 +159,15 @@ class AgreementDocument(DomainDocument):
     signed_file: AgreementFile | None = None
     audit_report_file: AgreementFile | None = None
     certificate_file: AgreementFile | None = None
+    chat_audit_report_file: AgreementFile | None = None
+    opportunity_audit_report_file: AgreementFile | None = None
     participants: list[AgreementParticipant] = Field(default_factory=list)
     fields: list[AgreementField] = Field(default_factory=list)
     verification_code: str
     is_active: bool = True
+    opportunity_id: UUID | None = None
+    conversation_id: UUID | None = None
+    contract_proposal_id: UUID | None = None
 
 
 class AgreementEventDocument(DomainDocument):

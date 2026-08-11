@@ -21,7 +21,10 @@ if TYPE_CHECKING:
     from pymongo.asynchronous.collection import AsyncCollection
     from pymongo.asynchronous.database import AsyncDatabase
 
-_USER_VISIBLE_TYPES = [ConversationMessageType.PARTICIPANT_MESSAGE.value]
+_USER_VISIBLE_TYPES = [
+    ConversationMessageType.PARTICIPANT_MESSAGE.value,
+    ConversationMessageType.SYSTEM_EVENT.value,
+]
 
 
 class ConversationsRepository:
@@ -31,10 +34,21 @@ class ConversationsRepository:
         self._collection: AsyncCollection = db[self.COLLECTION]
 
     async def ensure_indexes(self) -> None:
+        # Backfill so partial unique index covers legacy documents.
+        await self._collection.update_many(
+            {"is_active": {"$exists": False}},
+            {"$set": {"is_active": True}},
+        )
+        # Drop legacy unique index (all rows) if present so partial unique works.
+        try:
+            await self._collection.drop_index("uniq_opportunity_interested_company")
+        except Exception:  # noqa: BLE001
+            pass
         await self._collection.create_index(
             [("opportunity_id", ASCENDING), ("interested_company_id", ASCENDING)],
             unique=True,
-            name="uniq_opportunity_interested_company",
+            name="uniq_opportunity_interested_company_active",
+            partialFilterExpression={"is_active": True},
         )
         await self._collection.create_index(
             [("offerer_user_id", ASCENDING), ("last_message_at", DESCENDING)],
@@ -71,6 +85,7 @@ class ConversationsRepository:
             {
                 "opportunity_id": opportunity_id,
                 "interested_company_id": interested_company_id,
+                "is_active": True,
             }
         )
         return OpportunityConversationDocument.model_validate(raw) if raw else None

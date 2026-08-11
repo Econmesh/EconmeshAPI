@@ -37,6 +37,8 @@ from src.modules.agreements.notification_service import AgreementNotificationSer
 from src.modules.agreements.pdf_service import (
     build_audit_report_pdf,
     build_certificate_pdf,
+    build_chat_audit_report_pdf,
+    build_opportunity_audit_report_pdf,
     pdf_page_count,
     sha256_bytes,
     stamp_signed_pdf,
@@ -66,6 +68,8 @@ from src.modules.agreements.schema import (
 )
 from src.modules.auth.repository import AuthRepository
 from src.modules.companies.repository import CompaniesRepository
+from src.modules.conversations.repository import ConversationMessagesRepository
+from src.modules.opportunities.repository import OpportunitiesRepository
 from src.modules.users.repository import UsersRepository
 from src.shared.constants.roles import Role
 from src.shared.utils.ids import new_uuid
@@ -84,6 +88,8 @@ class AgreementsService:
         companies_repository: CompaniesRepository,
         users_repository: UsersRepository,
         notifications: AgreementNotificationService | None = None,
+        messages_repository: ConversationMessagesRepository | None = None,
+        opportunities_repository: OpportunitiesRepository | None = None,
     ) -> None:
         self._repo = repository
         self._events = events_repository
@@ -91,6 +97,8 @@ class AgreementsService:
         self._companies_repo = companies_repository
         self._users_repo = users_repository
         self._notifications = notifications
+        self._messages_repo = messages_repository
+        self._opportunities_repo = opportunities_repository
 
     # ------------------------------------------------------------------ helpers
     async def _resolve_user(self, firebase_uid: str):
@@ -138,6 +146,10 @@ class AgreementsService:
             signed_file=self._file_response(doc.signed_file),
             audit_report_file=self._file_response(doc.audit_report_file),
             certificate_file=self._file_response(doc.certificate_file),
+            chat_audit_report_file=self._file_response(doc.chat_audit_report_file),
+            opportunity_audit_report_file=self._file_response(
+                doc.opportunity_audit_report_file
+            ),
             participants=[self._participant_response(p) for p in doc.participants],
             fields=[self._field_response(f) for f in doc.fields],
             verification_code=doc.verification_code,
@@ -377,6 +389,112 @@ class AgreementsService:
         if changed:
             await self._repo.replace(doc)
         return self._to_response(doc)
+
+    async def create_from_contract_proposal(
+        self,
+        *,
+        title: str,
+        description: str | None,
+        owner_user_id: UUID,
+        offerer_company_id: UUID,
+        interested_company_id: UUID,
+        offerer_user_id: UUID,
+        interested_user_id: UUID,
+        pdf_file: Any,
+        opportunity_id: UUID,
+        conversation_id: UUID,
+        contract_proposal_id: UUID,
+    ) -> AgreementDocument:
+        """Create an agreement in ``awaiting_send`` from an approved minuta."""
+        offerer_company = await self._companies_repo.get(offerer_company_id)
+        interested_company = await self._companies_repo.get(interested_company_id)
+        if offerer_company is None or interested_company is None:
+            raise NotFoundError("Empresa vinculada à minuta não encontrada.")
+
+        offerer_user = await self._auth_repo.get_by_id(offerer_user_id)
+        interested_user = await self._auth_repo.get_by_id(interested_user_id)
+        if offerer_user is None or interested_user is None:
+            raise NotFoundError("Usuário vinculado à minuta não encontrado.")
+
+        company_name = offerer_company.trade_name or offerer_company.legal_name
+        agreement_file = AgreementFile(
+            storage_key=pdf_file.storage_key,
+            url=pdf_file.url,
+            sha256=pdf_file.sha256,
+            filename=pdf_file.filename,
+            page_count=pdf_file.page_count,
+            size_bytes=pdf_file.size_bytes,
+        )
+
+        offerer_email = offerer_company.email or offerer_user.email
+        interested_email = interested_company.email or interested_user.email
+        if not offerer_email or not interested_email:
+            raise ValidationAppError(
+                "E-mail das partes é obrigatório para criar o acordo a partir da minuta."
+            )
+
+        participants = [
+            AgreementParticipant(
+                kind=ParticipantKind.COMPANY,
+                user_id=offerer_user.id,
+                company_id=offerer_company.id,
+                company_name=company_name,
+                name=offerer_company.legal_representative or offerer_user.name or company_name,
+                email=str(offerer_email).lower(),
+                role=ParticipantRole.SIGN,
+                order_index=0,
+            ),
+            AgreementParticipant(
+                kind=ParticipantKind.COMPANY,
+                user_id=interested_user.id,
+                company_id=interested_company.id,
+                company_name=interested_company.trade_name or interested_company.legal_name,
+                name=(
+                    interested_company.legal_representative
+                    or interested_user.name
+                    or interested_company.legal_name
+                ),
+                email=str(interested_email).lower(),
+                role=ParticipantRole.SIGN,
+                order_index=1,
+            ),
+        ]
+
+        doc = AgreementDocument(
+            title=title,
+            description=description,
+            company_id=offerer_company_id,
+            company_name=company_name,
+            owner_user_id=owner_user_id,
+            signing_mode=SigningMode.UNORDERED,
+            verification_code=self._verification_code(),
+            status=AgreementStatus.AWAITING_SEND,
+            original_file=agreement_file,
+            participants=participants,
+            opportunity_id=opportunity_id,
+            conversation_id=conversation_id,
+            contract_proposal_id=contract_proposal_id,
+        )
+        await self._repo.create(doc)
+        await self._append_event(
+            doc.id,
+            AgreementEventType.CREATED,
+            actor_user_id=owner_user_id,
+            actor_name=offerer_user.name,
+            actor_company_id=offerer_company_id,
+            actor_company_name=company_name,
+            metadata={
+                "source": "contract_proposal",
+                "contract_proposal_id": str(contract_proposal_id),
+            },
+        )
+        if self._notifications:
+            await self._notifications.notify_minuta_approved(
+                doc,
+                offerer_user_id=offerer_user_id,
+                interested_user_id=interested_user_id,
+            )
+        return doc
 
     async def create(
         self, payload: AgreementCreate, *, firebase_uid: str
@@ -889,6 +1007,55 @@ class AgreementsService:
             owner_id=doc.owner_user_id,
             filename=f"certificado-{doc.verification_code}.pdf",
         )
+
+        signed_ats = [p.completed_at for p in doc.participants if p.completed_at]
+        until = max(signed_ats) if signed_ats else utcnow()
+
+        if doc.conversation_id and self._messages_repo is not None:
+            raw_messages = await self._messages_repo.list_by_conversation(
+                doc.conversation_id, user_visible_only=True
+            )
+            message_rows: list[dict[str, object]] = []
+            for msg in raw_messages:
+                if msg.created_at > until:
+                    continue
+                author = await self._auth_repo.get_by_id(msg.author_id)
+                message_rows.append(
+                    {
+                        "created_at": msg.created_at.strftime("%d/%m/%Y %H:%M:%S"),
+                        "author_name": (author.name if author else None)
+                        or msg.event_actor_name,
+                        "author_role": msg.author_role.value
+                        if hasattr(msg.author_role, "value")
+                        else str(msg.author_role),
+                        "message_type": msg.message_type.value
+                        if hasattr(msg.message_type, "value")
+                        else str(msg.message_type),
+                        "body": msg.body,
+                    }
+                )
+            chat_bytes = build_chat_audit_report_pdf(
+                agreement=doc, messages=message_rows, until=until
+            )
+            doc.chat_audit_report_file = await self._upload_pdf(
+                chat_bytes,
+                owner_id=doc.owner_user_id,
+                filename=f"auditoria-chat-{doc.verification_code}.pdf",
+            )
+
+        if doc.opportunity_id and self._opportunities_repo is not None:
+            opportunity = await self._opportunities_repo.get(doc.opportunity_id)
+            if opportunity is not None:
+                opp_data = opportunity.model_dump(mode="json")
+                opp_bytes = build_opportunity_audit_report_pdf(
+                    agreement=doc, opportunity=opp_data
+                )
+                doc.opportunity_audit_report_file = await self._upload_pdf(
+                    opp_bytes,
+                    owner_id=doc.owner_user_id,
+                    filename=f"auditoria-oportunidade-{doc.verification_code}.pdf",
+                )
+
         await self._repo.replace(doc)
         await self._append_event(doc.id, AgreementEventType.COMPLETED)
 
@@ -988,8 +1155,53 @@ class AgreementsService:
             "signed": doc.signed_file,
             "audit": doc.audit_report_file,
             "certificate": doc.certificate_file,
+            "chat_audit": doc.chat_audit_report_file,
+            "opportunity_audit": doc.opportunity_audit_report_file,
         }
         file = mapping.get(artifact)
+        # #region agent log
+        try:
+            import json
+            from pathlib import Path
+
+            _root = Path(__file__).resolve().parents[3]
+            for _log_path in (
+                _root / "debug-c6c0dd.log",
+                _root / ".cursor" / "debug-c6c0dd.log",
+            ):
+                _log_path.parent.mkdir(parents=True, exist_ok=True)
+                with _log_path.open("a", encoding="utf-8") as _lf:
+                    _lf.write(
+                        json.dumps(
+                            {
+                                "sessionId": "c6c0dd",
+                                "runId": "post-fix",
+                                "hypothesisId": "A",
+                                "location": "agreements/service.py:download_url",
+                                "message": "download_url mapping result",
+                                "data": {
+                                    "agreement_id": str(agreement_id),
+                                    "artifact": artifact,
+                                    "artifact_known": artifact in mapping,
+                                    "file_present": file is not None,
+                                    "has_chat_audit": doc.chat_audit_report_file
+                                    is not None,
+                                    "has_opportunity_audit": doc.opportunity_audit_report_file
+                                    is not None,
+                                    "has_conversation_id": doc.conversation_id
+                                    is not None,
+                                    "has_opportunity_id": doc.opportunity_id
+                                    is not None,
+                                    "status": str(doc.status),
+                                },
+                                "timestamp": int(utcnow().timestamp() * 1000),
+                            }
+                        )
+                        + "\n"
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+        # #endregion
         if file is None:
             raise NotFoundError("Arquivo não disponível.")
         await self._append_event(
@@ -1002,6 +1214,36 @@ class AgreementsService:
             metadata={"artifact": artifact},
         )
         return file.url
+
+    async def download_file_bytes(
+        self,
+        agreement_id: UUID,
+        artifact: str,
+        *,
+        firebase_uid: str,
+        role: Role,
+    ) -> tuple[bytes, str]:
+        """Fetch artifact bytes server-side (avoids browser CORS on Storage)."""
+        user = await self._resolve_user(firebase_uid)
+        doc = await self._get_accessible(
+            agreement_id,
+            user_id=user.id,
+            email=user.email,
+            is_admin=role is Role.ADMIN,
+        )
+        mapping = {
+            "original": doc.original_file,
+            "signed": doc.signed_file,
+            "audit": doc.audit_report_file,
+            "certificate": doc.certificate_file,
+            "chat_audit": doc.chat_audit_report_file,
+            "opportunity_audit": doc.opportunity_audit_report_file,
+        }
+        file = mapping.get(artifact)
+        if file is None:
+            raise NotFoundError("Arquivo não disponível.")
+        data = await self._download_bytes(file.url)
+        return data, file.filename or f"{artifact}.pdf"
 
     async def search_companies(
         self, q: str, *, firebase_uid: str

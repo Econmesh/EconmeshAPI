@@ -183,6 +183,19 @@ class AgreementsController:
         )
         return DownloadUrlResponse(url=url, artifact=artifact)
 
+    async def download_file(
+        self,
+        agreement_id: UUID,
+        artifact: str,
+        current_user: CurrentUser,
+    ) -> tuple[bytes, str]:
+        return await self._service.download_file_bytes(
+            agreement_id,
+            artifact,
+            firebase_uid=current_user.uid,
+            role=current_user.role,
+        )
+
     async def search_companies(
         self, q: str, current_user: CurrentUser
     ) -> CompanySearchResponse:

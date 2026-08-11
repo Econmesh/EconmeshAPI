@@ -145,6 +145,35 @@ class AgreementNotificationService:
                 event=event,
             )
 
+    async def notify_minuta_approved(
+        self,
+        agreement: AgreementDocument,
+        *,
+        offerer_user_id: UUID,
+        interested_user_id: UUID,
+    ) -> None:
+        """Notify both parties that an approved minuta started the agreement flow."""
+        await self.notify_user_ids(
+            [offerer_user_id],
+            title="Minuta aprovada!",
+            body=(
+                "A outra empresa aprovou a minuta e o processo de acordo foi iniciado. "
+                "Acesse os Acordos para acompanhar o processo de assinatura."
+            ),
+            agreement_id=agreement.id,
+            event="minuta_approved",
+        )
+        await self.notify_user_ids(
+            [interested_user_id],
+            title="Processo de acordo iniciado!",
+            body=(
+                "A minuta foi aprovada com sucesso. Em breve, você receberá o documento "
+                "para assinatura. Fique de olho nas suas notificações."
+            ),
+            agreement_id=agreement.id,
+            event="agreement_started",
+        )
+
     async def notify_sent(self, agreement: AgreementDocument) -> None:
         emails = [p.email for p in agreement.participants]
         await self.notify_by_emails(

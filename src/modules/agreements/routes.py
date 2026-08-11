@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
+from fastapi.responses import Response
 
 from src.infrastructure.email import email_sender
 from src.infrastructure.realtime.redis_pubsub import NotificationRealtimePublisher
@@ -30,7 +31,9 @@ from src.modules.agreements.schema import (
 from src.modules.agreements.service import AgreementsService
 from src.modules.auth.repository import AuthRepository
 from src.modules.companies.repository import CompaniesRepository
+from src.modules.conversations.repository import ConversationMessagesRepository
 from src.modules.notifications.repository import UserNotificationsRepository
+from src.modules.opportunities.repository import OpportunitiesRepository
 from src.modules.users.repository import UsersRepository
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
@@ -65,6 +68,8 @@ def _build_controller(
         companies_repo,
         users_repo,
         notifications=notifications,
+        messages_repository=ConversationMessagesRepository(db),
+        opportunities_repository=OpportunitiesRepository(db),
     )
     return AgreementsController(service)
 
@@ -302,6 +307,30 @@ async def download_agreement_artifact(
     request: Request,
 ) -> DownloadUrlResponse:
     return await controller.download(agreement_id, artifact, current_user, request)
+
+
+@router.get(
+    "/{agreement_id}/file/{artifact}",
+    summary="Stream agreement artifact bytes (PDF proxy).",
+    response_class=Response,
+)
+async def stream_agreement_artifact(
+    agreement_id: UUID,
+    artifact: str,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    data, filename = await controller.download_file(
+        agreement_id, artifact, current_user
+    )
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "private, max-age=60",
+        },
+    )
 
 
 __all__ = ["router"]

@@ -24,11 +24,16 @@ from src.modules.conversations.deps import (
     build_user_conversations_controller,
 )
 from src.modules.conversations.schema import (
+    ConversationCloseRequest,
     ConversationCreate,
     ConversationListResponse,
     ConversationMessageCreate,
     ConversationMessageListResponse,
     ConversationMessageResponse,
+    ConversationRequestNewContact,
+    ConversationRequestReopen,
+    ConversationRespondNewContact,
+    ConversationRespondReopen,
     ConversationResponse,
     UserConversationListParams,
 )
@@ -231,6 +236,93 @@ async def mark_messages_read(
     current_user: CurrentUserDep,
 ) -> ConversationMessageListResponse:
     return await controller.mark_messages_read(conversation_id, current_user)
+
+
+@router.post(
+    "/{conversation_id}/close",
+    response_model=ConversationResponse,
+    summary="Close the contact between the parties.",
+)
+async def close_conversation(
+    conversation_id: UUID,
+    payload: ConversationCloseRequest,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+) -> ConversationResponse:
+    return await controller.close(conversation_id, payload, current_user)
+
+
+@router.post(
+    "/{conversation_id}/reopen",
+    response_model=ConversationResponse,
+    summary="Reopen a contact (only the user who closed it).",
+)
+async def reopen_conversation(
+    conversation_id: UUID,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+) -> ConversationResponse:
+    return await controller.reopen(conversation_id, current_user)
+
+
+@router.post(
+    "/{conversation_id}/request-reopen",
+    response_model=ConversationResponse,
+    summary="Request reopen of a closed contact.",
+)
+async def request_reopen(
+    conversation_id: UUID,
+    payload: ConversationRequestReopen,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+) -> ConversationResponse:
+    return await controller.request_reopen(conversation_id, payload, current_user)
+
+
+@router.post(
+    "/{conversation_id}/respond-reopen",
+    response_model=ConversationResponse,
+    summary="Accept or reject a reopen request.",
+)
+async def respond_reopen(
+    conversation_id: UUID,
+    payload: ConversationRespondReopen,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+) -> ConversationResponse:
+    return await controller.respond_reopen(conversation_id, payload, current_user)
+
+
+@router.post(
+    "/{conversation_id}/request-new-contact",
+    response_model=ConversationResponse,
+    summary="Request a new contact thread on the same opportunity.",
+)
+async def request_new_contact(
+    conversation_id: UUID,
+    payload: ConversationRequestNewContact,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+) -> ConversationResponse:
+    return await controller.request_new_contact(
+        conversation_id, payload, current_user
+    )
+
+
+@router.post(
+    "/{conversation_id}/respond-new-contact",
+    response_model=ConversationResponse,
+    summary="Accept or reject a new-contact request.",
+)
+async def respond_new_contact(
+    conversation_id: UUID,
+    payload: ConversationRespondNewContact,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+) -> ConversationResponse:
+    return await controller.respond_new_contact(
+        conversation_id, payload, current_user
+    )
 
 
 @router.get(

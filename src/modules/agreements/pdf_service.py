@@ -202,9 +202,127 @@ def build_certificate_pdf(
         doc.close()
 
 
+def _append_lines(doc: fitz.Document, lines: list[str], *, title: str) -> None:
+    page = doc.new_page()
+    y = 48
+    page.insert_text((48, y), title, fontsize=12)
+    y += 22
+    for line in lines:
+        if y > 780:
+            page = doc.new_page()
+            y = 48
+        # Wrap long lines roughly
+        chunk = line
+        while len(chunk) > 110:
+            page.insert_text((48, y), chunk[:110], fontsize=8)
+            y += 12
+            if y > 780:
+                page = doc.new_page()
+                y = 48
+            chunk = chunk[110:]
+        page.insert_text((48, y), chunk, fontsize=8)
+        y += 12
+
+
+def build_chat_audit_report_pdf(
+    *,
+    agreement: AgreementDocument,
+    messages: list[dict[str, object]],
+    until: datetime | None,
+) -> bytes:
+    doc = fitz.open()
+    try:
+        cutoff = (
+            until.strftime("%d/%m/%Y %H:%M:%S") + " UTC" if until else "conclusão do acordo"
+        )
+        lines = [
+            f"Acordo: {agreement.title}",
+            f"Código: {agreement.verification_code}",
+            f"Conversa: {agreement.conversation_id or '—'}",
+            f"Período: mensagens até {cutoff}",
+            "",
+            "Histórico do chat:",
+        ]
+        if not messages:
+            lines.append("(Nenhuma mensagem registrada até o momento da assinatura.)")
+        for msg in messages:
+            created = str(msg.get("created_at", ""))
+            author = str(msg.get("author_name") or msg.get("author_role") or "Sistema")
+            body = str(msg.get("body") or "").replace("\n", " ")
+            msg_type = str(msg.get("message_type") or "")
+            lines.append(f"{created} — [{msg_type}] {author}: {body}")
+        _append_lines(
+            doc,
+            lines,
+            title="Relatório de Auditoria do Chat — EconMesh",
+        )
+        out = io.BytesIO()
+        doc.save(out)
+        return out.getvalue()
+    finally:
+        doc.close()
+
+
+def build_opportunity_audit_report_pdf(
+    *,
+    agreement: AgreementDocument,
+    opportunity: dict[str, object],
+) -> bytes:
+    doc = fitz.open()
+    try:
+        lines = [
+            f"Acordo: {agreement.title}",
+            f"Código: {agreement.verification_code}",
+            f"Oportunidade vinculada: {agreement.opportunity_id or '—'}",
+            "",
+            "Registro da oportunidade (como cadastrada):",
+        ]
+        labels = [
+            ("id", "ID"),
+            ("title", "Título"),
+            ("description", "Descrição"),
+            ("company_name", "Empresa"),
+            ("opportunity_type", "Tipo"),
+            ("offer_demand", "Oferta/Demanda"),
+            ("category", "Categoria"),
+            ("technical_detail", "Detalhe técnico"),
+            ("physical_state", "Estado físico"),
+            ("periodicity", "Periodicidade"),
+            ("quantity", "Quantidade"),
+            ("unit", "Unidade"),
+            ("price", "Preço"),
+            ("price_negotiable", "Preço negociável"),
+            ("city", "Cidade"),
+            ("state", "Estado"),
+            ("purity_percent", "Pureza (%)"),
+            ("is_active", "Ativa"),
+            ("created_at", "Criada em"),
+            ("updated_at", "Atualizada em"),
+        ]
+        for key, label in labels:
+            if key not in opportunity:
+                continue
+            value = opportunity.get(key)
+            if value is None or value == "":
+                value = "—"
+            lines.append(f"{label}: {value}")
+        _append_lines(
+            doc,
+            lines,
+            title="Relatório de Auditoria da Oportunidade — EconMesh",
+        )
+        out = io.BytesIO()
+        doc.save(out)
+        return out.getvalue()
+    finally:
+        doc.close()
+
+
 __all__ = [
     "build_audit_report_pdf",
     "build_certificate_pdf",
+    "build_chat_audit_report_pdf",
+    "build_opportunity_audit_report_pdf",
     "pdf_page_count",
     "sha256_bytes",
     "stamp_signed_pdf",

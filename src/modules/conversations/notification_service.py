@@ -197,5 +197,74 @@ class ConversationNotificationService:
                 action_url=admin_url,
             )
 
+    async def notify_contact_closed(
+        self,
+        conversation: OpportunityConversationDocument,
+        *,
+        actor_name: str,
+        recipient: UserDocument,
+        reason: str | None,
+    ) -> None:
+        title = "Contato encerrado"
+        body = f"{actor_name} encerrou o contato sobre “{conversation.opportunity_title}”."
+        if reason:
+            body = f"{body} Motivo: {reason}"
+        await self._notify(
+            recipient,
+            title=title,
+            body=body,
+            conversation=conversation,
+            event="contact_closed",
+            action_url=self._app_url(conversation),
+        )
+
+    async def notify_reopen_requested(
+        self,
+        conversation: OpportunityConversationDocument,
+        *,
+        actor_name: str,
+        recipient: UserDocument,
+        message: str | None,
+    ) -> None:
+        title = "Solicitação de reabertura"
+        body = (
+            f"{actor_name} solicitou a reabertura do contato sobre "
+            f"“{conversation.opportunity_title}”."
+        )
+        if message:
+            body = f"{body} Mensagem: {message}"
+        await self._notify(
+            recipient,
+            title=title,
+            body=body,
+            conversation=conversation,
+            event="reopen_requested",
+            action_url=self._app_url(conversation),
+        )
+
+    async def notify_new_contact_requested(
+        self,
+        conversation: OpportunityConversationDocument,
+        *,
+        actor_name: str,
+        recipient: UserDocument,
+        message: str | None,
+    ) -> None:
+        title = "Solicitação de novo contato"
+        body = (
+            f"{actor_name} solicitou um novo contato sobre "
+            f"“{conversation.opportunity_title}”."
+        )
+        if message:
+            body = f"{body} Mensagem: {message}"
+        await self._notify(
+            recipient,
+            title=title,
+            body=body,
+            conversation=conversation,
+            event="new_contact_requested",
+            action_url=self._app_url(conversation),
+        )
+
 
 __all__ = ["ConversationNotificationService"]

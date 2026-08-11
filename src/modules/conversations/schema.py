@@ -13,6 +13,7 @@ from src.modules.conversations.model import (
     ConversationAuthorRole,
     ConversationMessageType,
     ConversationStatus,
+    ConversationSystemEventKind,
 )
 from src.shared.schemas.base import APIModel
 
@@ -31,6 +32,28 @@ class ConversationInternalNoteCreate(APIModel):
     body: str = Field(..., min_length=1, max_length=5000)
 
 
+class ConversationCloseRequest(APIModel):
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class ConversationRequestReopen(APIModel):
+    message: str | None = Field(default=None, max_length=2000)
+
+
+class ConversationRespondReopen(APIModel):
+    accept: bool
+    message: str | None = Field(default=None, max_length=2000)
+
+
+class ConversationRequestNewContact(APIModel):
+    message: str | None = Field(default=None, max_length=2000)
+
+
+class ConversationRespondNewContact(APIModel):
+    accept: bool
+    message: str | None = Field(default=None, max_length=2000)
+
+
 class ConversationMessageResponse(APIModel):
     id: UUID
     conversation_id: UUID
@@ -42,6 +65,10 @@ class ConversationMessageResponse(APIModel):
     body: str
     read_at: datetime | None = None
     created_at: datetime
+    event_kind: ConversationSystemEventKind | None = None
+    event_actor_user_id: UUID | None = None
+    event_actor_name: str | None = None
+    event_reason: str | None = None
 
 
 class ConversationMessageListResponse(APIModel):
@@ -66,6 +93,24 @@ class ConversationResponse(APIModel):
     updated_at: datetime
     counterpart_company_name: str | None = None
     my_role: Literal["offerer", "interested"] | None = None
+    closed_by_user_id: UUID | None = None
+    closed_at: datetime | None = None
+    close_reason: str | None = None
+    reopen_requested_by_user_id: UUID | None = None
+    reopen_requested_at: datetime | None = None
+    reopen_request_message: str | None = None
+    new_contact_requested_by_user_id: UUID | None = None
+    new_contact_requested_at: datetime | None = None
+    new_contact_request_message: str | None = None
+    is_active: bool = True
+    replaced_by_conversation_id: UUID | None = None
+    supersedes_conversation_id: UUID | None = None
+    i_closed: bool = False
+    can_reopen: bool = False
+    can_request_reopen: bool = False
+    can_respond_reopen: bool = False
+    can_request_new_contact: bool = False
+    can_respond_new_contact: bool = False
 
 
 class ConversationDetailResponse(ConversationResponse):
@@ -120,6 +165,7 @@ class ConversationStreamEvent(APIModel):
         "message_created",
         "messages_read",
         "presence_changed",
+        "conversation_updated",
         "ping",
     ]
     data: dict[str, object] = Field(default_factory=dict)
@@ -127,6 +173,7 @@ class ConversationStreamEvent(APIModel):
 
 __all__ = [
     "AdminConversationListParams",
+    "ConversationCloseRequest",
     "ConversationCreate",
     "ConversationDetailResponse",
     "ConversationInternalNoteCreate",
@@ -134,6 +181,10 @@ __all__ = [
     "ConversationMessageCreate",
     "ConversationMessageListResponse",
     "ConversationMessageResponse",
+    "ConversationRequestNewContact",
+    "ConversationRequestReopen",
+    "ConversationRespondNewContact",
+    "ConversationRespondReopen",
     "ConversationResponse",
     "ConversationStreamEvent",
     "UserConversationListParams",
