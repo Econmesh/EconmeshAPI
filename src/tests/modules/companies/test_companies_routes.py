@@ -364,3 +364,62 @@ async def test_admin_upload_document_marks_approved() -> None:
     assert result.operating_license is not None
     assert result.operating_license.status == "approved"
     review.enqueue.assert_not_awaited()
+
+
+async def test_admin_upload_document_can_stay_pending() -> None:
+    from io import BytesIO
+    from unittest.mock import patch
+
+    from fastapi import UploadFile
+    from starlette.datastructures import Headers
+
+    from src.modules.companies.model import (
+        CompanyComplianceFile,
+        CompanyDocument,
+        ComplianceDocumentStatus,
+    )
+    from src.modules.companies.service import CompaniesService
+
+    company = CompanyDocument(
+        id=new_uuid(),
+        owner_user_id=new_uuid(),
+        legal_name="Acme Ltda",
+        tax_id="11222333000181",
+        is_active=True,
+    )
+    pending = CompanyComplianceFile(
+        storage_key="econmesh/company-docs/x/lo.pdf",
+        public_url="https://example.com/lo.pdf",
+        filename="lo.pdf",
+        content_type="application/pdf",
+        status=ComplianceDocumentStatus.PENDING,
+    )
+    repo = AsyncMock()
+    repo.get = AsyncMock(return_value=company)
+
+    async def _update(_id, patch):
+        file = CompanyComplianceFile.model_validate(patch["operating_license"])
+        return company.model_copy(update={"operating_license": file})
+
+    repo.update = AsyncMock(side_effect=_update)
+    review = AsyncMock()
+    service = CompaniesService(repo, AsyncMock(), compliance_review=review)
+    file = UploadFile(
+        filename="lo.pdf",
+        file=BytesIO(b"%PDF-1.4"),
+        headers=Headers({"content-type": "application/pdf"}),
+    )
+    with patch(
+        "src.modules.companies.service.upload_compliance_file",
+        AsyncMock(return_value=pending),
+    ):
+        result = await service.upload_document(
+            company.id,
+            "operating_license",
+            file,
+            as_admin=True,
+            mark_approved=False,
+        )
+    assert result.operating_license is not None
+    assert result.operating_license.status == "pending"
+    review.enqueue.assert_awaited_once()

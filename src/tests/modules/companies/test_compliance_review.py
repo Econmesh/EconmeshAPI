@@ -207,6 +207,34 @@ async def test_reject_stores_reason_and_closes_when_both_reviewed() -> None:
     assert close_fields["status"] == SupportTicketStatus.CLOSED.value
 
 
+async def test_approve_keeps_ticket_open_when_other_document_missing() -> None:
+    service, deps = _build_service()
+    company = _company(
+        operating_license=_file(status=ComplianceDocumentStatus.PENDING),
+        mtr_document=None,
+    )
+    reviewer_id = new_uuid()
+    deps["companies"].get = AsyncMock(return_value=company)
+    updated = company.model_copy(
+        update={"operating_license": _file(status=ComplianceDocumentStatus.APPROVED)}
+    )
+    deps["companies"].update = AsyncMock(return_value=updated)
+    deps["auth"].get_by_id = AsyncMock(return_value=None)
+    ticket = SupportTicketDocument(
+        source=SupportTicketSource.DOCUMENT_REVIEW,
+        user_id=company.owner_user_id,
+        company_id=company.id,
+        ticket_number=1,
+        subject="Documentos",
+        status=SupportTicketStatus.OPEN,
+    )
+    deps["tickets"].find_open_document_review = AsyncMock(return_value=ticket)
+
+    await service.approve(company.id, "operating_license", reviewer_id=reviewer_id)
+
+    deps["tickets"].update.assert_not_awaited()
+
+
 async def test_approve_rejects_already_reviewed_document() -> None:
     service, deps = _build_service()
     company = _company(operating_license=_file(status=ComplianceDocumentStatus.APPROVED))
