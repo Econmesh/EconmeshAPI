@@ -19,6 +19,7 @@ from src.modules.contract_proposals.schema import (
     RejectProposalRequest,
     RequestChangesRequest,
 )
+from src.modules.billing.deps import require_active_subscription
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
 from src.shared.dependencies.redis import get_redis
@@ -27,7 +28,11 @@ if TYPE_CHECKING:
     from pymongo.asynchronous.database import AsyncDatabase
     from redis.asyncio import Redis
 
-router = APIRouter(prefix="/contract-proposals", tags=["contract-proposals"])
+router = APIRouter(
+    prefix="/contract-proposals",
+    tags=["contract-proposals"],
+    dependencies=[Depends(require_active_subscription)],
+)
 
 
 def _build_controller(

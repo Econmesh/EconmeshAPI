@@ -37,6 +37,7 @@ from src.modules.conversations.schema import (
     ConversationResponse,
     UserConversationListParams,
 )
+from src.modules.billing.deps import require_active_subscription
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
 from src.shared.dependencies.redis import get_redis
@@ -45,7 +46,11 @@ if TYPE_CHECKING:
     from pymongo.asynchronous.database import AsyncDatabase
     from redis.asyncio import Redis
 
-router = APIRouter(prefix="/conversations", tags=["conversations"])
+router = APIRouter(
+    prefix="/conversations",
+    tags=["conversations"],
+    dependencies=[Depends(require_active_subscription)],
+)
 
 _HEARTBEAT_SECONDS = 30
 

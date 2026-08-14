@@ -115,6 +115,15 @@ class Settings(BaseSettings):
     FRONTEND_APP_URL: str = "https://app.econmesh.com"
     FRONTEND_ADMIN_URL: str = "https://admin.econmesh.com"
 
+    # --- Asaas (billing / subscriptions) --------------------------------------
+    # API key never leaves the server. Use a sandbox key in development.
+    ASAAS_API_KEY: str = ""
+    ASAAS_API_URL: str = "https://api-sandbox.asaas.com/v3"
+    # Webhook auth token (32–255 chars). Must NOT be the Asaas API key.
+    ASAAS_WEBHOOK_TOKEN: str = ""
+    ASAAS_CHECKOUT_SUCCESS_URL: str = "https://app.econmesh.com/dashboard/assinatura?checkout=success"
+    ASAAS_CHECKOUT_CANCEL_URL: str = "https://app.econmesh.com/dashboard/assinatura?checkout=cancel"
+
     # ------------------------------------------------------------------ helpers
     @field_validator("FIREBASE_CLOCK_SKEW_SECONDS")
     @classmethod

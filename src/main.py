@@ -31,6 +31,9 @@ from src.infrastructure.redis.client import redis_manager
 from src.modules.admin import router as admin_router
 from src.modules.agreements import router as agreements_router
 from src.modules.auth import router as auth_router
+from src.modules.billing import admin_router as billing_admin_router
+from src.modules.billing import router as billing_router
+from src.modules.billing import webhook_router as billing_webhook_router
 from src.modules.blockchain import router as blockchain_router
 from src.modules.blog import router as blog_router
 from src.modules.coming_soon import router as coming_soon_router
@@ -169,6 +172,9 @@ def _register_routers(app: FastAPI, settings: Settings) -> None:
     api_v1.include_router(contract_proposals_router)
     api_v1.include_router(support_router)
     api_v1.include_router(public_support_router)
+    api_v1.include_router(billing_router)
+    api_v1.include_router(billing_admin_router)
+    api_v1.include_router(billing_webhook_router)
     api_v1.include_router(circularity_router)
     api_v1.include_router(files_router)
     api_v1.include_router(blockchain_router)

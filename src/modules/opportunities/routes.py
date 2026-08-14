@@ -21,6 +21,7 @@ from src.modules.opportunities.schema import (
     OpportunityUpdate,
 )
 from src.modules.opportunities.service import OpportunitiesService
+from src.modules.billing.deps import require_active_subscription
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
 from src.shared.schemas.responses import StorageUploadResponse
@@ -28,7 +29,11 @@ from src.shared.schemas.responses import StorageUploadResponse
 if TYPE_CHECKING:
     from pymongo.asynchronous.database import AsyncDatabase
 
-router = APIRouter(prefix="/opportunities", tags=["opportunities"])
+router = APIRouter(
+    prefix="/opportunities",
+    tags=["opportunities"],
+    dependencies=[Depends(require_active_subscription)],
+)
 
 
 def _build_controller(

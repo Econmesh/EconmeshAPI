@@ -121,5 +121,34 @@ class CompaniesRepository:
         result = await self._collection.delete_one({"_id": company_id})
         return result.deleted_count > 0
 
+    async def list_active_except(
+        self, exclude_ids: set[UUID], *, skip: int, limit: int
+    ) -> list[CompanyDocument]:
+        query: dict = {"is_active": True}
+        if exclude_ids:
+            query["_id"] = {"$nin": list(exclude_ids)}
+        cursor = (
+            self._collection.find(query)
+            .sort("created_at", ASCENDING)
+            .skip(skip)
+            .limit(limit)
+        )
+        docs = await cursor.to_list(length=limit)
+        return [CompanyDocument.model_validate(doc) for doc in docs]
+
+    async def count_active_except(self, exclude_ids: set[UUID]) -> int:
+        query: dict = {"is_active": True}
+        if exclude_ids:
+            query["_id"] = {"$nin": list(exclude_ids)}
+        return await self._collection.count_documents(query)
+
+    async def get_many(self, company_ids: list[UUID]) -> dict[UUID, CompanyDocument]:
+        if not company_ids:
+            return {}
+        cursor = self._collection.find({"_id": {"$in": company_ids}})
+        docs = await cursor.to_list(length=len(company_ids))
+        companies = [CompanyDocument.model_validate(doc) for doc in docs]
+        return {c.id: c for c in companies}
+
 
 __all__ = ["CompaniesRepository"]
