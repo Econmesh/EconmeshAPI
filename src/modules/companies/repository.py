@@ -74,6 +74,21 @@ class CompaniesRepository:
         doc = await self._collection.find_one({"country": country, "tax_id": tax_id})
         return CompanyDocument.model_validate(doc) if doc else None
 
+    async def search(self, q: str, *, limit: int = 20) -> list[CompanyDocument]:
+        import re
+
+        escaped = re.escape(q.strip()) if q.strip() else ""
+        query: dict = {"is_active": True}
+        if escaped:
+            query["$or"] = [
+                {"legal_name": {"$regex": escaped, "$options": "i"}},
+                {"trade_name": {"$regex": escaped, "$options": "i"}},
+                {"tax_id": {"$regex": escaped, "$options": "i"}},
+            ]
+        cursor = self._collection.find(query).sort("legal_name", ASCENDING).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [CompanyDocument.model_validate(doc) for doc in docs]
+
     async def create(self, doc: CompanyDocument) -> CompanyDocument:
         await self._collection.insert_one(doc.to_mongo())
         return doc

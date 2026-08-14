@@ -33,6 +33,9 @@ class CompanyDocument(DomainDocument):
     tax_id: str = Field(..., description="CNPJ / VAT / EIN — country-specific.")
     email: str | None = None
     phone: str | None = None
+    legal_representative: str | None = Field(
+        default=None, description="Nome do responsável legal."
+    )
     address: CompanyAddress | None = None
     country: str = Field(default="BR", min_length=2, max_length=2)
     website: str | None = None

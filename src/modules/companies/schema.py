@@ -36,6 +36,7 @@ class CompanyCreate(APIModel):
     tax_id: str = Field(..., min_length=5, max_length=20)
     email: str | None = Field(default=None, max_length=254)
     phone: str | None = Field(default=None, max_length=30)
+    legal_representative: str | None = Field(default=None, max_length=200)
     address: CompanyAddressInput | None = None
     country: str = Field(default="BR", min_length=2, max_length=2)
     website: str | None = Field(default=None, max_length=500)
@@ -50,6 +51,7 @@ class CompanyUpdate(APIModel):
     trade_name: str | None = Field(default=None, max_length=200)
     email: str | None = Field(default=None, max_length=254)
     phone: str | None = Field(default=None, max_length=30)
+    legal_representative: str | None = Field(default=None, max_length=200)
     address: CompanyAddressInput | None = None
     website: str | None = Field(default=None, max_length=500)
     description: str | None = Field(default=None, max_length=2000)
@@ -67,6 +69,7 @@ class CompanyResponse(APIModel):
     tax_id: str
     email: str | None = None
     phone: str | None = None
+    legal_representative: str | None = None
     address: CompanyAddressResponse | None = None
     country: str
     website: str | None = None

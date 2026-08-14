@@ -165,6 +165,31 @@ async def _unhandled_exception_handler(
     _request: Request, exc: Exception
 ) -> ORJSONResponse:
     logger.exception("unhandled_exception", exc_type=type(exc).__name__)
+    # #region agent log
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        _log = _Path(__file__).resolve().parents[2] / "debug-bb369f.log"
+        _log.open("a", encoding="utf-8").write(
+            _json.dumps(
+                {
+                    "sessionId": "bb369f",
+                    "hypothesisId": "A,B,C,E",
+                    "location": "exceptions.py:_unhandled_exception_handler",
+                    "message": "unhandled exception",
+                    "data": {
+                        "exc_type": type(exc).__name__,
+                        "exc_msg": str(exc)[:500],
+                        "path": str(getattr(_request, "url", "")),
+                    },
+                    "timestamp": __import__("time").time() * 1000,
+                }
+            )
+            + "\n"
+        )
+    except Exception:
+        pass
+    # #endregion
     return _build_response(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         code="internal_error",
