@@ -167,6 +167,7 @@ class SupportService:
             id=doc.id,
             source=doc.source,
             user_id=doc.user_id,
+            company_id=doc.company_id,
             visitor_email=doc.visitor_email,
             visitor_name=doc.visitor_name,
             company=doc.company,

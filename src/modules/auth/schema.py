@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import EmailStr, Field, field_validator, model_validator
 
+from src.modules.companies.schema import CompanyAddressInput
 from src.shared.constants.roles import Role
 from src.shared.schemas.base import APIModel
 
@@ -21,6 +22,67 @@ class LoginRequest(APIModel):
     id_token: str = Field(..., min_length=20, description="Firebase-issued ID token.")
 
 
+class RegisterCompanyInput(APIModel):
+    """Company data collected at self-service signup (steps 1–2)."""
+
+    legal_name: str = Field(..., min_length=2, max_length=200)
+    trade_name: str | None = Field(default=None, max_length=200)
+    tax_id: str = Field(..., min_length=14, max_length=20, description="CNPJ digits only.")
+    email: EmailStr
+    phone: str = Field(..., min_length=8, max_length=30)
+    address: CompanyAddressInput
+    country: str = Field(default="BR", min_length=2, max_length=2)
+
+    @field_validator("legal_name")
+    @classmethod
+    def _legal_name_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("legal_name must not be blank")
+        return v.strip()
+
+    @field_validator("trade_name")
+    @classmethod
+    def _empty_trade_name_to_none(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        return stripped or None
+
+    @field_validator("tax_id")
+    @classmethod
+    def _digits_only_tax_id(cls, v: str) -> str:
+        digits = "".join(ch for ch in v if ch.isdigit())
+        if len(digits) != 14:
+            raise ValueError("tax_id must be a 14-digit CNPJ")
+        return digits
+
+    @field_validator("phone")
+    @classmethod
+    def _phone_not_blank(cls, v: str) -> str:
+        digits = "".join(ch for ch in v if ch.isdigit())
+        if len(digits) < 8:
+            raise ValueError("phone must contain at least 8 digits")
+        return v.strip()
+
+    @model_validator(mode="after")
+    def _address_required_fields(self) -> RegisterCompanyInput:
+        address = self.address
+        missing: list[str] = []
+        if not (address.postal_code or "").strip():
+            missing.append("postal_code")
+        if not (address.street or "").strip():
+            missing.append("street")
+        if not (address.number or "").strip():
+            missing.append("number")
+        if not (address.city or "").strip():
+            missing.append("city")
+        if not (address.state or "").strip():
+            missing.append("state")
+        if missing:
+            raise ValueError(f"address requires {', '.join(missing)}")
+        return self
+
+
 class RegisterRequest(APIModel):
     """Body for ``POST /auth/register`` — self-service signup of a standard user."""
 
@@ -31,6 +93,7 @@ class RegisterRequest(APIModel):
     # Optional: the frontend already compares the two fields. When sent, we
     # re-validate server-side as defense-in-depth.
     password_confirm: str | None = Field(default=None)
+    company: RegisterCompanyInput
 
     @field_validator("full_name")
     @classmethod
@@ -50,9 +113,10 @@ class AdminRegisterRequest(RegisterRequest):
     """Body for ``POST /auth/admin/users`` — privileged creation by an admin.
 
     Lets an authenticated admin assign any role (defaults to ``admin``) and
-    optionally skip the email-confirmation step.
+    optionally skip the email-confirmation step. Company is not required.
     """
 
+    company: RegisterCompanyInput | None = None
     role: Role = Field(default=Role.ADMIN, description="Role to grant the new user.")
     auto_confirm: bool = Field(
         default=True,
@@ -123,6 +187,7 @@ __all__ = [
     "LoginRequest",
     "LoginResponse",
     "MeResponse",
+    "RegisterCompanyInput",
     "RegisterRequest",
     "RegisterResponse",
     "ResendVerificationRequest",

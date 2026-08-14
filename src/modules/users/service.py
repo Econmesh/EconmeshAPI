@@ -107,6 +107,16 @@ class UsersService:
         profile = await self._repo.get_by_user(user.id)
         return self._to_response(user, profile)
 
+    async def get_profile_by_id(self, user_id: UUID) -> UserProfileResponse:
+        user = await self._auth_repo.get_by_id(user_id)
+        if user is None:
+            raise NotFoundError("User not found.", code="user_not_found")
+        profile = await self._repo.get_by_user(user.id)
+        return self._to_response(user, profile)
+
+    async def delete_profile_for_user(self, user_id: UUID) -> None:
+        await self._repo.delete_for_user(user_id)
+
     async def update_my_profile(
         self, payload: UserProfileUpdate, *, firebase_uid: str
     ) -> UserProfileResponse:

@@ -3,17 +3,25 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from fastapi import UploadFile
 
 from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from src.core.firebase import firebase
+from src.core.logging import get_logger
 from src.modules.auth.repository import AuthRepository
-from src.modules.companies.model import CompanyAddress, CompanyDocument
+from src.modules.companies.compliance_review import document_field
+from src.modules.companies.model import (
+    CompanyAddress,
+    CompanyDocument,
+    ComplianceDocumentStatus,
+)
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.companies.schema import (
     CompanyAddressResponse,
+    CompanyComplianceFileResponse,
     CompanyCreate,
     CompanyResponse,
     CompanyUpdate,
@@ -23,7 +31,13 @@ from src.modules.companies.schema import (
 from src.shared.schemas.responses import StorageUploadResponse
 from src.shared.utils.image_upload import extension_from_filename, upload_image_file
 from src.shared.utils.storage_keys import logo_storage_key
+from src.shared.utils.compliance_upload import upload_compliance_file
 from src.shared.utils.time import utcnow
+
+if TYPE_CHECKING:
+    from src.modules.companies.compliance_review import ComplianceReviewService
+
+logger = get_logger(__name__)
 
 _ALLOWED_LOGO_TYPES = {
     "image/jpeg",
@@ -39,9 +53,11 @@ class CompaniesService:
         self,
         repository: CompaniesRepository,
         auth_repository: AuthRepository,
+        compliance_review: ComplianceReviewService | None = None,
     ) -> None:
         self._repo = repository
         self._auth_repo = auth_repository
+        self._compliance_review = compliance_review
 
     async def _resolve_user_id(self, firebase_uid: str) -> UUID:
         user = await self._auth_repo.get_by_firebase_uid(firebase_uid)
@@ -57,6 +73,16 @@ class CompaniesService:
         address = None
         if doc.address is not None:
             address = CompanyAddressResponse.model_validate(doc.address.model_dump())
+        operating_license = None
+        if doc.operating_license is not None:
+            operating_license = CompanyComplianceFileResponse.model_validate(
+                doc.operating_license.model_dump()
+            )
+        mtr_document = None
+        if doc.mtr_document is not None:
+            mtr_document = CompanyComplianceFileResponse.model_validate(
+                doc.mtr_document.model_dump()
+            )
         return CompanyResponse(
             id=doc.id,
             owner_user_id=doc.owner_user_id,
@@ -73,6 +99,8 @@ class CompaniesService:
             logo_storage_key=doc.logo_storage_key,
             logo_url=doc.logo_url,
             sector=doc.sector,
+            operating_license=operating_license,
+            mtr_document=mtr_document,
             is_active=doc.is_active,
             created_at=doc.created_at,
             updated_at=doc.updated_at,
@@ -100,6 +128,11 @@ class CompaniesService:
         self, payload: CompanyCreate, *, firebase_uid: str
     ) -> CompanyResponse:
         owner_user_id = await self._resolve_user_id(firebase_uid)
+        if await self._repo.count_for_owner(owner_user_id) > 0:
+            raise ConflictError(
+                "This user already owns a company.",
+                code="owner_already_has_company",
+            )
         existing = await self._repo.get_by_tax_id(payload.country, payload.tax_id)
         if existing is not None and existing.is_active:
             raise ConflictError(
@@ -199,6 +232,59 @@ class CompaniesService:
             storage_key=storage_key,
         )
         return StorageUploadResponse(storage_key=storage_key, public_url=public_url)
+
+    async def upload_document(
+        self,
+        company_id: UUID,
+        kind: str,
+        file: UploadFile,
+        *,
+        firebase_uid: str | None = None,
+        as_admin: bool = False,
+        mark_approved: bool = True,
+    ) -> CompanyResponse:
+        field = document_field(kind)
+        doc = await self._repo.get(company_id)
+        if doc is None or not doc.is_active:
+            raise NotFoundError("Company not found.")
+        if not as_admin:
+            if firebase_uid is None:
+                raise ForbiddenError("You do not have access to this company.")
+            owner_user_id = await self._resolve_user_id(firebase_uid)
+            await self._ensure_owner(doc, owner_user_id)
+        uploaded = await upload_compliance_file(file, owner_user_id=doc.owner_user_id)
+        if as_admin and mark_approved:
+            uploaded = uploaded.model_copy(
+                update={
+                    "status": ComplianceDocumentStatus.APPROVED,
+                    "rejection_reason": None,
+                    "reviewed_at": utcnow(),
+                    "reviewed_by": None,
+                }
+            )
+        updated = await self._repo.update(
+            company_id, {field: uploaded.model_dump()}
+        )
+        if updated is None:
+            raise NotFoundError("Company not found.")
+        if not as_admin or not mark_approved:
+            await self._enqueue_document_review(updated)
+        return self._to_response(updated)
+
+    async def _enqueue_document_review(self, company: CompanyDocument) -> None:
+        if self._compliance_review is None:
+            return
+        try:
+            await self._compliance_review.enqueue(
+                company,
+                message=(
+                    f"A empresa {company.legal_name} enviou documentos para análise."
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "compliance_review_enqueue_failed", company_id=str(company.id)
+            )
 
 
 __all__ = ["CompaniesService"]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from src.core.exceptions import ValidationAppError
 from src.modules.auth.model import UserDocument
-from src.modules.companies.model import CompanyDocument
+from src.modules.companies.model import CompanyDocument, ComplianceDocumentStatus
 from src.modules.users.model import UserProfileDocument
 
 
@@ -68,6 +68,14 @@ def company_missing_fields(company: CompanyDocument) -> list[str]:
         ):
             if not field:
                 missing.append(key)
+    if not company.operating_license or not company.operating_license.storage_key:
+        missing.append("company.operating_license")
+    elif company.operating_license.status != ComplianceDocumentStatus.APPROVED:
+        missing.append("company.operating_license")
+    if not company.mtr_document or not company.mtr_document.storage_key:
+        missing.append("company.mtr_document")
+    elif company.mtr_document.status != ComplianceDocumentStatus.APPROVED:
+        missing.append("company.mtr_document")
     return missing
 
 

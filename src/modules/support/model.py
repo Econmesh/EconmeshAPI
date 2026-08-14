@@ -25,6 +25,7 @@ class SupportTicketSource(StrEnum):
     INTERNAL = "internal"
     EXTERNAL = "external"
     CONTACT_REQUEST = "contact_request"
+    DOCUMENT_REVIEW = "document_review"
 
 
 class SupportContactInterest(StrEnum):
@@ -57,6 +58,7 @@ class SupportTicketDocument(DomainDocument):
 
     source: SupportTicketSource = SupportTicketSource.INTERNAL
     user_id: UUID | None = None
+    company_id: UUID | None = None
     visitor_email: str | None = None
     visitor_name: str | None = None
     company: str | None = None

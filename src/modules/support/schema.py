@@ -80,6 +80,7 @@ class SupportTicketResponse(APIModel):
     id: UUID
     source: SupportTicketSource = SupportTicketSource.INTERNAL
     user_id: UUID | None = None
+    company_id: UUID | None = None
     visitor_email: str | None = None
     visitor_name: str | None = None
     company: str | None = None

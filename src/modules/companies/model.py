@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from enum import StrEnum
 from typing import ClassVar
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.shared.schemas.base import DomainDocument
+
+
+class ComplianceDocumentStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
 
 
 class CompanyAddress(BaseModel):
@@ -20,6 +28,21 @@ class CompanyAddress(BaseModel):
     neighborhood: str | None = None
     city: str | None = None
     state: str | None = None
+
+
+class CompanyComplianceFile(BaseModel):
+    """A compliance document stored in Firebase Storage."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    storage_key: str
+    public_url: str
+    filename: str
+    content_type: str
+    status: ComplianceDocumentStatus = ComplianceDocumentStatus.PENDING
+    rejection_reason: str | None = None
+    reviewed_at: datetime | None = None
+    reviewed_by: UUID | None = None
 
 
 class CompanyDocument(DomainDocument):
@@ -43,7 +66,18 @@ class CompanyDocument(DomainDocument):
     logo_storage_key: str | None = None
     logo_url: str | None = None
     sector: str | None = None
+    operating_license: CompanyComplianceFile | None = Field(
+        default=None, description="Licença de operação ambiental."
+    )
+    mtr_document: CompanyComplianceFile | None = Field(
+        default=None, description="Comprovante de cadastro no MTR Nacional (SINIR)."
+    )
     is_active: bool = True
 
 
-__all__ = ["CompanyAddress", "CompanyDocument"]
+__all__ = [
+    "CompanyAddress",
+    "CompanyComplianceFile",
+    "CompanyDocument",
+    "ComplianceDocumentStatus",
+]

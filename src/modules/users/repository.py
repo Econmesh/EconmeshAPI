@@ -114,5 +114,9 @@ class UsersRepository:
         )
         return UserProfileDocument.model_validate(doc)
 
+    async def delete_for_user(self, user_id: UUID) -> bool:
+        result = await self._collection.delete_one({"user_id": user_id})
+        return result.deleted_count > 0
+
 
 __all__ = ["UsersRepository"]

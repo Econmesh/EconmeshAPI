@@ -74,6 +74,7 @@ class NotificationKind(StrEnum):
     SUPPORT = "support"
     AGREEMENT = "agreement"
     CONVERSATION = "conversation"
+    COMPLIANCE = "compliance"
 
 
 class UserNotificationDocument(DomainDocument):

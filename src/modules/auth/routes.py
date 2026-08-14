@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from pymongo.asynchronous.database import AsyncDatabase
 from redis.asyncio import Redis
 
@@ -21,6 +23,9 @@ from src.modules.auth.schema import (
     VerifyAccountRequest,
 )
 from src.modules.auth.service import AuthService
+from src.modules.companies.compliance_review import build_compliance_review_service
+from src.modules.companies.repository import CompaniesRepository
+from src.modules.users.repository import UsersRepository
 from src.shared.constants.roles import Role
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
@@ -41,6 +46,9 @@ def _build_controller(
         repository=repository,
         redis_client=redis_client,
         verification_repository=verification_repository,
+        companies_repository=CompaniesRepository(db),
+        users_repository=UsersRepository(db),
+        compliance_review=build_compliance_review_service(db, redis_client),
     )
     return AuthController(service)
 
@@ -52,10 +60,21 @@ ControllerDep = Annotated[AuthController, Depends(_build_controller)]
     "/register",
     response_model=RegisterResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Register a standard user (requires email confirmation before login).",
+    summary="Register a standard user with company data and compliance documents.",
 )
-async def register(payload: RegisterRequest, controller: ControllerDep) -> RegisterResponse:
-    return await controller.register(payload)
+async def register(
+    controller: ControllerDep,
+    payload: Annotated[str, Form()],
+    operating_license: Annotated[UploadFile, File()],
+    mtr: Annotated[UploadFile, File()],
+) -> RegisterResponse:
+    try:
+        body = RegisterRequest.model_validate_json(payload)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+    return await controller.register(
+        body, operating_license=operating_license, mtr=mtr
+    )
 
 
 @router.post(
