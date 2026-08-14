@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
 from uuid import UUID
+from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile
 from httpx import AsyncClient
 
 from src.modules.companies.controller import CompaniesController
 from src.modules.companies.routes import _build_controller
 from src.modules.companies.schema import (
     CompanyAddressResponse,
+    CompanyComplianceFileResponse,
     CompanyResponse,
     LogoPresignResponse,
 )
@@ -49,6 +50,18 @@ def _sample_company(owner_id: UUID | None = None) -> CompanyResponse:
         logo_storage_key="econmesh/logos/logo.png",
         logo_url="https://example.com/logo.png",
         sector="Reciclagem",
+        operating_license=CompanyComplianceFileResponse(
+            storage_key="econmesh/company-docs/x/lo.pdf",
+            public_url="https://example.com/lo.pdf",
+            filename="lo.pdf",
+            content_type="application/pdf",
+        ),
+        mtr_document=CompanyComplianceFileResponse(
+            storage_key="econmesh/company-docs/x/mtr.pdf",
+            public_url="https://example.com/mtr.pdf",
+            filename="mtr.pdf",
+            content_type="application/pdf",
+        ),
         is_active=True,
         created_at=now,
         updated_at=now,
@@ -95,6 +108,29 @@ async def test_list_companies_returns_user_companies(
         assert body[0]["tax_id"] == "12345678000190"
     finally:
         app.dependency_overrides.clear()
+
+
+async def test_create_rejects_when_owner_already_has_company() -> None:
+    from src.core.exceptions import ConflictError
+    from src.modules.auth.model import UserDocument
+    from src.modules.companies.schema import CompanyCreate
+    from src.modules.companies.service import CompaniesService
+
+    repo = AsyncMock()
+    repo.count_for_owner = AsyncMock(return_value=1)
+    auth_repo = AsyncMock()
+    auth_repo.get_by_firebase_uid = AsyncMock(
+        return_value=UserDocument(firebase_uid="fb-uid-1", email="alice@example.com")
+    )
+    service = CompaniesService(repo, auth_repo)
+
+    with pytest.raises(ConflictError) as exc:
+        await service.create(
+            CompanyCreate(legal_name="Nova Empresa Ltda", tax_id="11222333000181"),
+            firebase_uid="fb-uid-1",
+        )
+    assert exc.value.code == "owner_already_has_company"
+    repo.create.assert_not_awaited()
 
 
 async def test_create_company_returns_201(app: FastAPI, client: AsyncClient) -> None:
@@ -185,3 +221,146 @@ async def test_presign_logo_returns_upload_url(app: FastAPI, client: AsyncClient
         assert "upload_url" in body
     finally:
         app.dependency_overrides.clear()
+
+
+async def test_upload_document_returns_company(app: FastAPI, client: AsyncClient) -> None:
+    fake_user = CurrentUser(uid="firebase-uid-123")
+    company = _sample_company()
+    company_id = company.id
+
+    class _StubController(CompaniesController):
+        def __init__(self) -> None:
+            pass
+
+        async def upload_document(
+            self,
+            company_id_arg: UUID,
+            kind: str,
+            file: UploadFile,
+            current_user: CurrentUser,
+        ) -> CompanyResponse:
+            assert company_id_arg == company_id
+            assert kind == "operating_license"
+            assert current_user.uid == "firebase-uid-123"
+            return company
+
+    app.dependency_overrides[get_current_user] = lambda: fake_user
+    app.dependency_overrides[_build_controller] = lambda: _StubController()
+    try:
+        response = await client.post(
+            f"/api/v1/companies/{company_id}/documents/operating_license/upload",
+            headers={"Authorization": "Bearer fake-token"},
+            files={"file": ("lo.pdf", b"%PDF-1.4 test", "application/pdf")},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["operating_license"]["filename"] == "lo.pdf"
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_upload_document_enqueues_review_for_owner() -> None:
+    from io import BytesIO
+    from unittest.mock import patch
+
+    from fastapi import UploadFile
+    from starlette.datastructures import Headers
+
+    from src.modules.auth.model import UserDocument
+    from src.modules.companies.model import (
+        CompanyComplianceFile,
+        CompanyDocument,
+        ComplianceDocumentStatus,
+    )
+    from src.modules.companies.service import CompaniesService
+
+    owner = UserDocument(firebase_uid="fb-uid-1", email="alice@example.com")
+    company = CompanyDocument(
+        id=new_uuid(),
+        owner_user_id=owner.id,
+        legal_name="Acme Ltda",
+        tax_id="11222333000181",
+        is_active=True,
+    )
+    uploaded = CompanyComplianceFile(
+        storage_key="econmesh/company-docs/x/lo.pdf",
+        public_url="https://example.com/lo.pdf",
+        filename="lo.pdf",
+        content_type="application/pdf",
+        status=ComplianceDocumentStatus.PENDING,
+    )
+    repo = AsyncMock()
+    repo.get = AsyncMock(return_value=company)
+    repo.update = AsyncMock(return_value=company.model_copy(update={"operating_license": uploaded}))
+    auth_repo = AsyncMock()
+    auth_repo.get_by_firebase_uid = AsyncMock(return_value=owner)
+    review = AsyncMock()
+    service = CompaniesService(repo, auth_repo, compliance_review=review)
+    file = UploadFile(
+        filename="lo.pdf",
+        file=BytesIO(b"%PDF-1.4"),
+        headers=Headers({"content-type": "application/pdf"}),
+    )
+    with patch(
+        "src.modules.companies.service.upload_compliance_file",
+        AsyncMock(return_value=uploaded),
+    ):
+        await service.upload_document(
+            company.id, "operating_license", file, firebase_uid="fb-uid-1"
+        )
+    review.enqueue.assert_awaited_once()
+
+
+async def test_admin_upload_document_marks_approved() -> None:
+    from io import BytesIO
+    from unittest.mock import patch
+
+    from fastapi import UploadFile
+    from starlette.datastructures import Headers
+
+    from src.modules.companies.model import (
+        CompanyComplianceFile,
+        CompanyDocument,
+        ComplianceDocumentStatus,
+    )
+    from src.modules.companies.service import CompaniesService
+
+    company = CompanyDocument(
+        id=new_uuid(),
+        owner_user_id=new_uuid(),
+        legal_name="Acme Ltda",
+        tax_id="11222333000181",
+        is_active=True,
+    )
+    pending = CompanyComplianceFile(
+        storage_key="econmesh/company-docs/x/lo.pdf",
+        public_url="https://example.com/lo.pdf",
+        filename="lo.pdf",
+        content_type="application/pdf",
+        status=ComplianceDocumentStatus.PENDING,
+    )
+    repo = AsyncMock()
+    repo.get = AsyncMock(return_value=company)
+
+    async def _update(_id, patch):
+        file = CompanyComplianceFile.model_validate(patch["operating_license"])
+        return company.model_copy(update={"operating_license": file})
+
+    repo.update = AsyncMock(side_effect=_update)
+    review = AsyncMock()
+    service = CompaniesService(repo, AsyncMock(), compliance_review=review)
+    file = UploadFile(
+        filename="lo.pdf",
+        file=BytesIO(b"%PDF-1.4"),
+        headers=Headers({"content-type": "application/pdf"}),
+    )
+    with patch(
+        "src.modules.companies.service.upload_compliance_file",
+        AsyncMock(return_value=pending),
+    ):
+        result = await service.upload_document(
+            company.id, "operating_license", file, as_admin=True
+        )
+    assert result.operating_license is not None
+    assert result.operating_license.status == "approved"
+    review.enqueue.assert_not_awaited()

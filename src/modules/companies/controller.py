@@ -61,5 +61,16 @@ class CompaniesController:
             file, firebase_uid=current_user.uid
         )
 
+    async def upload_document(
+        self,
+        company_id: UUID,
+        kind: str,
+        file: UploadFile,
+        current_user: CurrentUser,
+    ) -> CompanyResponse:
+        return await self._service.upload_document(
+            company_id, kind, file, firebase_uid=current_user.uid
+        )
+
 
 __all__ = ["CompaniesController"]

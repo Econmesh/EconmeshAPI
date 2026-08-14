@@ -69,6 +69,18 @@ class SupportTicketsRepository:
             name="uniq_contact_request_ticket_number",
         )
         await self._collection.create_index(
+            [("source", ASCENDING), ("ticket_number", ASCENDING)],
+            unique=True,
+            partialFilterExpression={
+                "source": SupportTicketSource.DOCUMENT_REVIEW.value
+            },
+            name="uniq_document_review_ticket_number",
+        )
+        await self._collection.create_index(
+            [("company_id", ASCENDING), ("source", ASCENDING), ("status", ASCENDING)],
+            name="ix_company_source_status",
+        )
+        await self._collection.create_index(
             [("user_id", ASCENDING), ("status", ASCENDING)],
             name="ix_user_status",
         )
@@ -112,6 +124,41 @@ class SupportTicketsRepository:
             {"source": SupportTicketSource.CONTACT_REQUEST.value}
         )
         return count + 1
+
+    async def next_document_review_ticket_number(self) -> int:
+        count = await self._collection.count_documents(
+            {"source": SupportTicketSource.DOCUMENT_REVIEW.value}
+        )
+        return count + 1
+
+    async def find_open_document_review(
+        self, company_id: UUID
+    ) -> SupportTicketDocument | None:
+        raw = await self._collection.find_one(
+            {
+                "company_id": company_id,
+                "source": SupportTicketSource.DOCUMENT_REVIEW.value,
+                "status": {
+                    "$in": [
+                        SupportTicketStatus.OPEN.value,
+                        SupportTicketStatus.IN_PROGRESS.value,
+                    ]
+                },
+            }
+        )
+        return SupportTicketDocument.model_validate(raw) if raw else None
+
+    async def find_latest_document_review(
+        self, company_id: UUID
+    ) -> SupportTicketDocument | None:
+        raw = await self._collection.find_one(
+            {
+                "company_id": company_id,
+                "source": SupportTicketSource.DOCUMENT_REVIEW.value,
+            },
+            sort=[("created_at", DESCENDING)],
+        )
+        return SupportTicketDocument.model_validate(raw) if raw else None
 
     async def update(
         self, ticket_id: UUID, fields: dict[str, Any]

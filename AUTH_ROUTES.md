@@ -3,10 +3,10 @@
 ## Status atual (cadastro/login)
 
 - **Login**: implementado e funcional. Agora **bloqueia** o acesso ate a conta ser confirmada (`is_verified`) e exige conta ativa (`is_active`).
-- **Cadastro**: implementado em `POST /api/v1/auth/register` (usuario padrao) e `POST /api/v1/auth/admin/users` (criacao privilegiada, somente admin).
+- **Cadastro**: implementado em `POST /api/v1/auth/register` (usuario padrao + empresa) e `POST /api/v1/auth/admin/users` (criacao privilegiada, somente admin).
 - **Validacao de conta**: implementada via token de uso unico com expiracao (24h) em `POST /api/v1/auth/verify` (reenvio em `POST /api/v1/auth/resend-verification`).
 - **Fonte de identidade**: o Firebase continua sendo o store de credenciais (email/senha). O cadastro cria a identidade no Firebase (via Admin SDK) e espelha o usuario no MongoDB; o `role` e gravado como custom claim.
-- **Teste**: `poetry run pytest src/tests/modules/auth/` -> `16 passed`.
+- **Teste**: `poetry run pytest src/tests/modules/auth/`
 
 ## Tipos de usuario / papeis
 
@@ -16,13 +16,16 @@
 
 ## Fluxo de cadastro + confirmacao
 
-1. Cliente chama `POST /api/v1/auth/register` com nome, email, telefone (opc), senha (e confirmacao opcional).
-2. A API cria a identidade no Firebase (email/senha, `email_verified=false`), define o claim `role=viewer`, e cria o documento em `users` com `is_verified=false`.
+1. Cliente chama `POST /api/v1/auth/register` em **multipart/form-data**:
+   - campo `payload`: JSON do usuario (`full_name`, `email`, `password`, `password_confirm` opcional, `phone` opcional) **e** da empresa (`company.legal_name`, `company.trade_name` opcional, `company.tax_id` / CNPJ, `company.email`, `company.phone`, `company.address` com CEP, rua, numero, cidade e UF obrigatorios);
+   - arquivo `operating_license` (obrigatorio): Licenca de Operacao (PDF, JPEG ou PNG, ate 10 MB);
+   - arquivo `mtr` (obrigatorio): comprovante MTR Nacional / SINIR (mesmos tipos e limite).
+2. A API valida e-mail unico e CNPJ unico **antes** de criar o Firebase. Em seguida cria a identidade no Firebase (email/senha, `email_verified=false`), define o claim `role=viewer`, cria o documento em `users` com `is_verified=false`, envia os dois documentos ao Storage, cria a empresa em `companies` (`owner_user_id` = novo usuario, `legal_representative` = nome do cadastrante, endereco + arquivos) e grava `user_profiles.company_id`. Cada usuario e responsavel de **exatamente uma** empresa.
 3. Um token de confirmacao (hash SHA-256 + expiracao) e gravado em `email_verifications`. Fora de producao, o token bruto e retornado na resposta (`verification_token`) para permitir o fluxo sem SMTP. **TODO**: disparar e-mail real quando o provedor de e-mail for integrado.
 4. Usuario confirma em `POST /api/v1/auth/verify` (corpo `{ "token": "<raw>" }`): marca `is_verified=true`/`email_verified=true` e seta `email_verified=true` no Firebase.
 5. So entao o `POST /api/v1/auth/login` (com `id_token` do Firebase) passa pelo gate de verificacao.
 
-Criacao por admin (`POST /api/v1/auth/admin/users`) aceita `role` e `auto_confirm` (default `true`), criando a conta ja confirmada.
+Criacao por admin (`POST /api/v1/auth/admin/users`) aceita `role` e `auto_confirm` (default `true`), criando a conta ja confirmada **sem** exigir empresa.
 
 ## Base de URL
 
@@ -160,4 +163,4 @@ Mapeamento de role:
 ## Conclusao objetiva
 
 - **Ja esta funcionando?** Sim, o fluxo de autenticacao (register/verify/login/me/logout/revoke-all) esta implementado e com testes passando.
-- **Existe cadastro separado?** Sim. `POST /auth/register` (usuario padrao) e `POST /auth/admin/users` (admin). A confirmacao de conta e obrigatoria antes do login.
+- **Existe cadastro separado?** Sim. `POST /auth/register` cria usuario padrao **e** a empresa da qual ele e o responsavel (1:1). `POST /auth/admin/users` cria contas privilegiadas sem empresa. A confirmacao de conta e obrigatoria antes do login.

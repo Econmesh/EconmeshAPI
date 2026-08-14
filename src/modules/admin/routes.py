@@ -38,8 +38,9 @@ from src.modules.agreements.service import AgreementsService
 from src.modules.auth.repository import AuthRepository, EmailVerificationRepository
 from src.modules.auth.schema import MeResponse, RegisterResponse
 from src.modules.auth.service import AuthService
+from src.modules.companies.compliance_review import build_compliance_review_service
 from src.modules.companies.repository import CompaniesRepository
-from src.modules.companies.schema import CompanyResponse, CompanyUpdate
+from src.modules.companies.schema import CompanyDocumentReject, CompanyResponse, CompanyUpdate
 from src.modules.companies.service import CompaniesService
 from src.modules.conversations.repository import ConversationMessagesRepository
 from src.modules.opportunities.repository import OpportunitiesRepository
@@ -118,6 +119,8 @@ from src.modules.conversations.schema import (
     ConversationMessageResponse,
 )
 from src.modules.users.repository import UsersRepository
+from src.modules.users.schema import UserProfileResponse
+from src.modules.users.service import UsersService
 from src.infrastructure.email import email_sender
 from src.infrastructure.realtime.conversation_pubsub import (
     subscribe_conversation_admin,
@@ -153,13 +156,22 @@ def _build_controller(
     redis_client: Annotated["Redis", Depends(get_redis)],
 ) -> AdminController:
     auth_repo = AuthRepository(db)
+    companies_repo = CompaniesRepository(db)
+    users_repo = UsersRepository(db)
     auth_service = AuthService(
         repository=auth_repo,
         redis_client=redis_client,
         verification_repository=EmailVerificationRepository(db),
+        companies_repository=companies_repo,
+        users_repository=users_repo,
     )
-    companies_repo = CompaniesRepository(db)
-    companies_service = CompaniesService(companies_repo, auth_repo)
+    users_service = UsersService(users_repo, auth_repo)
+    compliance_review = build_compliance_review_service(db, redis_client)
+    companies_service = CompaniesService(
+        companies_repo,
+        auth_repo,
+        compliance_review=compliance_review,
+    )
     opportunities_repo = OpportunitiesRepository(db)
     opportunities_service = OpportunitiesService(
         opportunities_repo, auth_repo, companies_repo
@@ -171,6 +183,9 @@ def _build_controller(
         companies_service=companies_service,
         opportunities_repository=opportunities_repo,
         opportunities_service=opportunities_service,
+        users_service=users_service,
+        verification_repository=EmailVerificationRepository(db),
+        compliance_review=compliance_review,
     )
     return AdminController(service)
 
@@ -246,6 +261,17 @@ async def get_user(controller: ControllerDep, user_id: UUID) -> AdminUserListIte
     return await controller.get_user(user_id)
 
 
+@router.get(
+    "/users/{user_id}/profile",
+    response_model=UserProfileResponse,
+    summary="Get a user's extended profile.",
+)
+async def get_user_profile(
+    controller: ControllerDep, user_id: UUID
+) -> UserProfileResponse:
+    return await controller.get_user_profile(user_id)
+
+
 @router.post(
     "/users",
     response_model=RegisterResponse,
@@ -267,6 +293,20 @@ async def update_user(
     user_id: UUID, payload: AdminUserUpdate, controller: ControllerDep
 ) -> MeResponse:
     return await controller.update_user(user_id, payload)
+
+
+@router.delete(
+    "/users/{user_id}",
+    response_model=MessageResponse,
+    summary="Delete a user and their profile.",
+)
+async def delete_user(
+    controller: ControllerDep,
+    user_id: UUID,
+    current_user: CurrentUserDep,
+) -> MessageResponse:
+    await controller.delete_user(user_id, actor_firebase_uid=current_user.uid)
+    return MessageResponse(message="User deleted successfully.")
 
 
 # ----------------------------------------------------------------- companies
@@ -328,6 +368,56 @@ async def delete_company(
 ) -> MessageResponse:
     await controller.delete_company(company_id)
     return MessageResponse(message="Company deleted successfully.")
+
+
+@router.post(
+    "/companies/{company_id}/documents/{kind}/upload",
+    response_model=CompanyResponse,
+    summary="Upload or replace a company compliance document.",
+)
+async def upload_company_document(
+    company_id: UUID,
+    kind: str,
+    controller: ControllerDep,
+    file: UploadFile = File(...),
+    approve: Annotated[bool, Query()] = True,
+) -> CompanyResponse:
+    return await controller.upload_company_document(
+        company_id, kind, file, approve=approve
+    )
+
+
+@router.post(
+    "/companies/{company_id}/documents/{kind}/approve",
+    response_model=CompanyResponse,
+    summary="Approve a company compliance document.",
+)
+async def approve_company_document(
+    company_id: UUID,
+    kind: str,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+) -> CompanyResponse:
+    return await controller.approve_company_document(
+        company_id, kind, firebase_uid=current_user.uid
+    )
+
+
+@router.post(
+    "/companies/{company_id}/documents/{kind}/reject",
+    response_model=CompanyResponse,
+    summary="Reject a company compliance document with a reason.",
+)
+async def reject_company_document(
+    company_id: UUID,
+    kind: str,
+    payload: CompanyDocumentReject,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+) -> CompanyResponse:
+    return await controller.reject_company_document(
+        company_id, kind, payload.reason, firebase_uid=current_user.uid
+    )
 
 
 # ------------------------------------------------------------- opportunities

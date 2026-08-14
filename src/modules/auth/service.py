@@ -6,10 +6,12 @@ import hashlib
 import secrets
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
+
+from fastapi import UploadFile
 from urllib.parse import urlencode
 
 from src.core.config import Environment, Settings, get_settings
-from src.core.exceptions import AuthError, ConflictError, ForbiddenError, NotFoundError
+from src.core.exceptions import AuthError, ConflictError, ForbiddenError, NotFoundError, ValidationAppError
 from src.core.firebase import FirebaseAdmin, firebase
 from src.core.logging import get_logger
 from src.infrastructure.email import EmailSender, email_sender
@@ -19,16 +21,22 @@ from src.modules.auth.schema import (
     AdminRegisterRequest,
     LoginResponse,
     MeResponse,
+    RegisterCompanyInput,
     RegisterRequest,
     RegisterResponse,
     TokenIntrospectionResponse,
 )
+from src.modules.companies.model import CompanyAddress, CompanyDocument
+from src.modules.companies.repository import CompaniesRepository
+from src.modules.users.repository import UsersRepository
 from src.shared.constants.roles import DEFAULT_ROLE, Role
 from src.shared.schemas.responses import MessageResponse
+from src.shared.utils.compliance_upload import upload_compliance_file
 from src.shared.utils.time import utcnow
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
+    from src.modules.companies.compliance_review import ComplianceReviewService
 
 logger = get_logger(__name__)
 
@@ -54,6 +62,9 @@ class AuthService:
         firebase_client: FirebaseAdmin | None = None,
         email_client: EmailSender | None = None,
         settings: Settings | None = None,
+        companies_repository: CompaniesRepository | None = None,
+        users_repository: UsersRepository | None = None,
+        compliance_review: ComplianceReviewService | None = None,
     ) -> None:
         self._repo = repository
         self._verifications = verification_repository
@@ -61,14 +72,27 @@ class AuthService:
         self._firebase = firebase_client or firebase
         self._email = email_client or email_sender
         self._settings = settings or get_settings()
+        self._companies = companies_repository
+        self._users = users_repository
+        self._compliance_review = compliance_review
 
     # ------------------------------------------------------------- register
-    async def register(self, payload: RegisterRequest) -> RegisterResponse:
+    async def register(
+        self,
+        payload: RegisterRequest,
+        *,
+        operating_license: UploadFile,
+        mtr: UploadFile,
+    ) -> RegisterResponse:
         """Self-service signup for a standard (non-privileged) user."""
+        if payload.company is None:
+            raise ValidationAppError("Company data is required.", code="company_required")
         return await self._create_account(
             payload,
             role=DEFAULT_ROLE,
             auto_confirm=False,
+            operating_license=operating_license,
+            mtr=mtr,
         )
 
     async def register_by_admin(self, payload: AdminRegisterRequest) -> RegisterResponse:
@@ -85,6 +109,8 @@ class AuthService:
         *,
         role: Role,
         auto_confirm: bool,
+        operating_license: UploadFile | None = None,
+        mtr: UploadFile | None = None,
     ) -> RegisterResponse:
         # ``APIModel`` serialises enums to their values, so normalise back.
         role = Role(role)
@@ -96,6 +122,9 @@ class AuthService:
                 code="email_already_exists",
             )
 
+        if payload.company is not None:
+            await self._assert_tax_id_available(payload.company)
+
         fb_user = await self._firebase.create_user(
             email=payload.email,
             password=payload.password,
@@ -105,6 +134,7 @@ class AuthService:
         )
         firebase_uid = str(fb_user.uid)
 
+        created_user: UserDocument | None = None
         # From here on, roll back the Firebase identity if local persistence fails.
         try:
             await self._firebase.set_custom_user_claims(firebase_uid, {"role": role.value})
@@ -123,8 +153,18 @@ class AuthService:
                 updated_at=now,
             )
             await self._repo.create_user(user)
+            created_user = user
+            if payload.company is not None:
+                await self._attach_company(
+                    user,
+                    payload.company,
+                    operating_license=operating_license,
+                    mtr=mtr,
+                )
         except Exception:
             logger.exception("register_persist_failed_rolling_back", firebase_uid=firebase_uid)
+            if created_user is not None:
+                await self._repo.delete_user(created_user.id)
             await self._firebase.delete_user(firebase_uid)
             raise
 
@@ -263,6 +303,81 @@ class AuthService:
         logger.warning("auth_revoke_all", firebase_uid=firebase_uid)
 
     # ---------------------------------------------------------------- helpers
+    async def _assert_tax_id_available(self, company: RegisterCompanyInput) -> None:
+        repo = self._require_companies()
+        existing = await repo.get_by_tax_id(company.country, company.tax_id)
+        if existing is not None and existing.is_active:
+            raise ConflictError(
+                "A company with this tax ID already exists.",
+                code="tax_id_exists",
+            )
+
+    async def _attach_company(
+        self,
+        user: UserDocument,
+        company: RegisterCompanyInput,
+        *,
+        operating_license: UploadFile | None = None,
+        mtr: UploadFile | None = None,
+    ) -> None:
+        companies = self._require_companies()
+        users = self._require_users()
+        address = CompanyAddress.model_validate(company.address.model_dump())
+        license_file = None
+        mtr_file = None
+        if operating_license is not None:
+            license_file = await upload_compliance_file(
+                operating_license,
+                owner_user_id=user.id,
+                firebase_client=self._firebase,
+            )
+        if mtr is not None:
+            mtr_file = await upload_compliance_file(
+                mtr,
+                owner_user_id=user.id,
+                firebase_client=self._firebase,
+            )
+        doc = CompanyDocument(
+            owner_user_id=user.id,
+            legal_name=company.legal_name,
+            trade_name=company.trade_name,
+            tax_id=company.tax_id,
+            email=str(company.email),
+            phone=company.phone,
+            country=company.country,
+            address=address,
+            legal_representative=user.name,
+            operating_license=license_file,
+            mtr_document=mtr_file,
+        )
+        created = await companies.create(doc)
+        try:
+            await users.upsert_for_user(user.id, {"company_id": created.id})
+        except Exception:
+            await companies.hard_delete(created.id)
+            raise
+        await self._enqueue_document_review(created)
+
+    async def _enqueue_document_review(self, company: CompanyDocument) -> None:
+        if self._compliance_review is None:
+            return
+        try:
+            await self._compliance_review.enqueue(company)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "compliance_review_enqueue_failed", company_id=str(company.id)
+            )
+
+    def _require_companies(self) -> CompaniesRepository:
+        if self._companies is None:
+            raise RuntimeError("CompaniesRepository is not configured.")
+        return self._companies
+
+    def _require_users(self) -> UsersRepository:
+        if self._users is None:
+            raise RuntimeError("UsersRepository is not configured.")
+        return self._users
+
     async def _issue_verification_token(self, user: UserDocument) -> str:
         repo = self._require_verifications()
         raw_token = secrets.token_urlsafe(32)

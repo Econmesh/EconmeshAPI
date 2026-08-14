@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from fastapi import UploadFile
+
 from src.modules.auth.schema import (
     AdminRegisterRequest,
     LoginRequest,
@@ -21,8 +23,16 @@ class AuthController:
     def __init__(self, service: AuthService) -> None:
         self._service = service
 
-    async def register(self, payload: RegisterRequest) -> RegisterResponse:
-        return await self._service.register(payload)
+    async def register(
+        self,
+        payload: RegisterRequest,
+        *,
+        operating_license: UploadFile,
+        mtr: UploadFile,
+    ) -> RegisterResponse:
+        return await self._service.register(
+            payload, operating_license=operating_license, mtr=mtr
+        )
 
     async def register_by_admin(self, payload: AdminRegisterRequest) -> RegisterResponse:
         return await self._service.register_by_admin(payload)

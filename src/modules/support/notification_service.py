@@ -218,6 +218,30 @@ class SupportNotificationService:
                 action_url=admin_url,
             )
 
+    async def notify_admins_document_review(
+        self, ticket: SupportTicketDocument, *, company_name: str
+    ) -> None:
+        label = _format_ticket_label(ticket)
+        title = f"Documentos para análise: {company_name}"
+        body = (
+            f"A empresa {company_name} enviou documentos para análise "
+            f"({label})."
+        )
+        admins = await self._auth_repo.list_admins()
+        admin_url = (
+            f"{self._settings.FRONTEND_ADMIN_URL.rstrip('/')}"
+            f"/dashboard/suporte/{ticket.id}"
+        )
+        for admin in admins:
+            await self._notify(
+                admin,
+                title=title,
+                body=body,
+                ticket=ticket,
+                event="document_review",
+                action_url=admin_url,
+            )
+
     async def notify_admins_user_message(
         self, ticket: SupportTicketDocument, *, user_name: str, preview: str
     ) -> None:

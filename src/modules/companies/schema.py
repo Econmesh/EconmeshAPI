@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import Field, HttpUrl
 
+from src.modules.companies.model import ComplianceDocumentStatus
 from src.shared.schemas.base import APIModel
 
 
@@ -28,6 +29,21 @@ class CompanyAddressResponse(APIModel):
     neighborhood: str | None = None
     city: str | None = None
     state: str | None = None
+
+
+class CompanyComplianceFileResponse(APIModel):
+    storage_key: str
+    public_url: str
+    filename: str
+    content_type: str
+    status: ComplianceDocumentStatus = ComplianceDocumentStatus.PENDING
+    rejection_reason: str | None = None
+    reviewed_at: datetime | None = None
+    reviewed_by: UUID | None = None
+
+
+class CompanyDocumentReject(APIModel):
+    reason: str = Field(..., min_length=3, max_length=2000)
 
 
 class CompanyCreate(APIModel):
@@ -77,6 +93,8 @@ class CompanyResponse(APIModel):
     logo_storage_key: str | None = None
     logo_url: str | None = None
     sector: str | None = None
+    operating_license: CompanyComplianceFileResponse | None = None
+    mtr_document: CompanyComplianceFileResponse | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -97,7 +115,9 @@ class LogoPresignResponse(APIModel):
 __all__ = [
     "CompanyAddressInput",
     "CompanyAddressResponse",
+    "CompanyComplianceFileResponse",
     "CompanyCreate",
+    "CompanyDocumentReject",
     "CompanyResponse",
     "CompanyUpdate",
     "LogoPresignRequest",

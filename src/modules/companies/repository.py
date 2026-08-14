@@ -35,6 +35,12 @@ class CompaniesRepository:
         await self._collection.create_index(
             [("is_active", ASCENDING)], name="ix_is_active"
         )
+        await self._collection.create_index(
+            [("owner_user_id", ASCENDING)],
+            unique=True,
+            name="uniq_active_owner_user_id",
+            partialFilterExpression={"is_active": True},
+        )
 
     async def list_for_owner(
         self, owner_user_id: UUID, *, skip: int, limit: int
@@ -110,6 +116,10 @@ class CompaniesRepository:
             {"$set": {"is_active": False, "updated_at": utcnow()}},
         )
         return result.modified_count > 0
+
+    async def hard_delete(self, company_id: UUID) -> bool:
+        result = await self._collection.delete_one({"_id": company_id})
+        return result.deleted_count > 0
 
 
 __all__ = ["CompaniesRepository"]

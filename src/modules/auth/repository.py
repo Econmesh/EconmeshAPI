@@ -131,6 +131,11 @@ class AuthRepository:
         await self._collection.insert_one(user.to_mongo())
         return user
 
+    async def delete_user(self, user_id: UUID) -> bool:
+        """Hard-delete a user (used to roll back a failed registration)."""
+        result = await self._collection.delete_one({"_id": user_id})
+        return result.deleted_count > 0
+
     async def upsert_from_firebase(self, claims: dict[str, Any]) -> UserDocument:
         """Insert or update a user from Firebase claims; bumps ``last_login_at``."""
         firebase_uid = str(claims["uid"])

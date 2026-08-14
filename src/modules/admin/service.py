@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from fastapi import UploadFile
+
 from src.core.exceptions import ConflictError, NotFoundError
 from src.core.firebase import firebase
 from src.modules.admin.schema import (
@@ -16,9 +18,10 @@ from src.modules.admin.schema import (
     AdminUserUpdate,
 )
 from src.modules.auth.model import UserDocument
-from src.modules.auth.repository import AuthRepository
+from src.modules.auth.repository import AuthRepository, EmailVerificationRepository
 from src.modules.auth.schema import MeResponse, RegisterResponse
 from src.modules.auth.service import AuthService
+from src.modules.companies.compliance_review import ComplianceReviewService
 from src.modules.companies.model import CompanyAddress, CompanyDocument
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.companies.schema import CompanyResponse, CompanyUpdate
@@ -31,6 +34,8 @@ from src.modules.opportunities.schema import (
     OpportunityUpdate,
 )
 from src.modules.opportunities.service import OpportunitiesService
+from src.modules.users.schema import UserProfileResponse
+from src.modules.users.service import UsersService
 from src.shared.constants.roles import Role
 
 
@@ -43,6 +48,9 @@ class AdminService:
         companies_service: CompaniesService,
         opportunities_repository: OpportunitiesRepository,
         opportunities_service: OpportunitiesService,
+        users_service: UsersService,
+        verification_repository: EmailVerificationRepository | None = None,
+        compliance_review: ComplianceReviewService | None = None,
     ) -> None:
         self._auth_repo = auth_repository
         self._auth_service = auth_service
@@ -50,6 +58,9 @@ class AdminService:
         self._companies_service = companies_service
         self._opportunities_repo = opportunities_repository
         self._opportunities_service = opportunities_service
+        self._users_service = users_service
+        self._verification_repo = verification_repository
+        self._compliance_review = compliance_review
 
     @staticmethod
     def _user_to_list_item(user: UserDocument) -> AdminUserListItem:
@@ -152,6 +163,36 @@ class AdminService:
 
         return self._user_to_me(user)
 
+    async def get_user_profile(self, user_id: UUID) -> UserProfileResponse:
+        return await self._users_service.get_profile_by_id(user_id)
+
+    async def delete_user(self, user_id: UUID, *, actor_firebase_uid: str) -> None:
+        user = await self._auth_repo.get_by_id(user_id)
+        if user is None:
+            raise NotFoundError("User not found.", code="user_not_found")
+
+        if user.firebase_uid == actor_firebase_uid:
+            raise ConflictError(
+                "You cannot delete your own account.",
+                code="cannot_delete_self",
+            )
+
+        if user.role is Role.ADMIN:
+            admins = await self._auth_repo.list_admins()
+            if len(admins) <= 1:
+                raise ConflictError(
+                    "Cannot delete the last administrator.",
+                    code="cannot_delete_last_admin",
+                )
+
+        await firebase.delete_user(user.firebase_uid)
+        await self._users_service.delete_profile_for_user(user_id)
+        if self._verification_repo is not None:
+            await self._verification_repo.delete_for_user(user_id)
+        deleted = await self._auth_repo.delete_user(user_id)
+        if not deleted:
+            raise NotFoundError("User not found.", code="user_not_found")
+
     async def list_companies(self, *, page: int, page_size: int) -> AdminCompanyListResponse:
         skip = (page - 1) * page_size
         docs = await self._companies_repo.list_all(skip=skip, limit=page_size)
@@ -175,6 +216,12 @@ class AdminService:
         owner = await self._auth_repo.get_by_id(payload.owner_user_id)
         if owner is None:
             raise NotFoundError("Owner user not found.", code="user_not_found")
+
+        if await self._companies_repo.count_for_owner(payload.owner_user_id) > 0:
+            raise ConflictError(
+                "This user already owns a company.",
+                code="owner_already_has_company",
+            )
 
         existing = await self._companies_repo.get_by_tax_id(payload.country, payload.tax_id)
         if existing is not None and existing.is_active:
@@ -220,6 +267,46 @@ class AdminService:
         if updated is None:
             raise NotFoundError("Company not found.")
         return self._companies_service._to_response(updated)
+
+    async def upload_company_document(
+        self,
+        company_id: UUID,
+        kind: str,
+        file: UploadFile,
+        *,
+        approve: bool = True,
+    ) -> CompanyResponse:
+        return await self._companies_service.upload_document(
+            company_id, kind, file, as_admin=True, mark_approved=approve
+        )
+
+    async def approve_company_document(
+        self, company_id: UUID, kind: str, *, firebase_uid: str
+    ) -> CompanyResponse:
+        reviewer = await self._require_reviewer(firebase_uid)
+        if self._compliance_review is None:
+            raise NotFoundError("Document review is not configured.")
+        updated = await self._compliance_review.approve(
+            company_id, kind, reviewer_id=reviewer.id
+        )
+        return self._companies_service._to_response(updated)
+
+    async def reject_company_document(
+        self, company_id: UUID, kind: str, reason: str, *, firebase_uid: str
+    ) -> CompanyResponse:
+        reviewer = await self._require_reviewer(firebase_uid)
+        if self._compliance_review is None:
+            raise NotFoundError("Document review is not configured.")
+        updated = await self._compliance_review.reject(
+            company_id, kind, reviewer_id=reviewer.id, reason=reason
+        )
+        return self._companies_service._to_response(updated)
+
+    async def _require_reviewer(self, firebase_uid: str) -> UserDocument:
+        user = await self._auth_repo.get_by_firebase_uid(firebase_uid)
+        if user is None:
+            raise NotFoundError("User not found.", code="user_not_found")
+        return user
 
     async def delete_company(self, company_id: UUID) -> None:
         doc = await self._companies_repo.get(company_id)

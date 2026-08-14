@@ -18,23 +18,29 @@ from src.modules.companies.schema import (
     LogoPresignResponse,
 )
 from src.modules.companies.service import CompaniesService
+from src.modules.companies.compliance_review import build_compliance_review_service
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
+from src.shared.dependencies.redis import get_redis
 from src.shared.schemas.pagination import PaginationParams
 from src.shared.schemas.responses import StorageUploadResponse
 
 if TYPE_CHECKING:
     from pymongo.asynchronous.database import AsyncDatabase
+    from redis.asyncio import Redis
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
 
 def _build_controller(
     db: Annotated["AsyncDatabase", Depends(get_db)],
+    redis_client: Annotated["Redis", Depends(get_redis)],
 ) -> CompaniesController:
     repo = CompaniesRepository(db)
     auth_repo = AuthRepository(db)
-    service = CompaniesService(repo, auth_repo)
+    service = CompaniesService(
+        repo, auth_repo, compliance_review=build_compliance_review_service(db, redis_client)
+    )
     return CompaniesController(service)
 
 
@@ -95,6 +101,22 @@ async def upload_company_logo(
     file: UploadFile = File(...),
 ) -> StorageUploadResponse:
     return await controller.upload_logo(file, current_user)
+
+
+@router.post(
+    "/{company_id}/documents/{kind}/upload",
+    response_model=CompanyResponse,
+    summary="Upload or replace a company compliance document (operating_license or mtr).",
+    status_code=status.HTTP_200_OK,
+)
+async def upload_company_document(
+    company_id: UUID,
+    kind: str,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+    file: UploadFile = File(...),
+) -> CompanyResponse:
+    return await controller.upload_document(company_id, kind, file, current_user)
 
 
 @router.get(
