@@ -28,7 +28,9 @@ class OpportunitiesController:
         self, params: OpportunityListParams, current_user: CurrentUser
     ) -> OpportunityListResponse:
         return await self._service.list(
-            params, firebase_uid=current_user.uid
+            params,
+            firebase_uid=current_user.uid,
+            is_admin=current_user.is_admin,
         )
 
     async def get(

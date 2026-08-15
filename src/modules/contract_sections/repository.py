@@ -7,11 +7,13 @@ from uuid import UUID
 
 from pymongo import ASCENDING, DESCENDING, ReturnDocument
 
+from src.modules.contract_sections.matching import opportunity_mongo_filter
 from src.modules.contract_sections.model import (
     ContractSectionTemplateDocument,
     ContractType,
     SectionAppliesTo,
 )
+from src.modules.opportunities.model import OpportunityType
 from src.shared.utils.time import utcnow
 
 if TYPE_CHECKING:
@@ -35,6 +37,10 @@ class ContractSectionsRepository:
             name="ix_type_active_sort",
         )
         await self._collection.create_index(
+            [("opportunity_types", ASCENDING), ("is_active", ASCENDING)],
+            name="ix_opportunity_types_active",
+        )
+        await self._collection.create_index(
             [("created_at", DESCENDING)], name="ix_created_at"
         )
 
@@ -56,6 +62,7 @@ class ContractSectionsRepository:
         skip: int,
         limit: int,
         contract_type: SectionAppliesTo | None = None,
+        opportunity_type: OpportunityType | None = None,
         active_only: bool = False,
     ) -> list[ContractSectionTemplateDocument]:
         query: dict[str, Any] = {}
@@ -63,6 +70,8 @@ class ContractSectionsRepository:
             query["is_active"] = True
         if contract_type is not None:
             query["contract_type"] = contract_type
+        if opportunity_type is not None:
+            query.update(opportunity_mongo_filter(opportunity_type))
         cursor = (
             self._collection.find(query)
             .sort([("sort_order", ASCENDING), ("created_at", DESCENDING)])
@@ -76,6 +85,7 @@ class ContractSectionsRepository:
         self,
         *,
         contract_type: SectionAppliesTo | None = None,
+        opportunity_type: OpportunityType | None = None,
         active_only: bool = False,
     ) -> int:
         query: dict[str, Any] = {}
@@ -83,6 +93,8 @@ class ContractSectionsRepository:
             query["is_active"] = True
         if contract_type is not None:
             query["contract_type"] = contract_type
+        if opportunity_type is not None:
+            query.update(opportunity_mongo_filter(opportunity_type))
         return await self._collection.count_documents(query)
 
     async def list_active_by_type(
@@ -104,6 +116,19 @@ class ContractSectionsRepository:
                 },
             }
         ).sort([("sort_order", ASCENDING), ("created_at", ASCENDING)])
+        docs = await cursor.to_list(length=500)
+        return [ContractSectionTemplateDocument.model_validate(doc) for doc in docs]
+
+    async def list_active_by_opportunity_type(
+        self, opportunity_type: OpportunityType | str
+    ) -> list[ContractSectionTemplateDocument]:
+        query: dict[str, Any] = {
+            "is_active": True,
+            **opportunity_mongo_filter(opportunity_type),
+        }
+        cursor = self._collection.find(query).sort(
+            [("sort_order", ASCENDING), ("created_at", ASCENDING)]
+        )
         docs = await cursor.to_list(length=500)
         return [ContractSectionTemplateDocument.model_validate(doc) for doc in docs]
 

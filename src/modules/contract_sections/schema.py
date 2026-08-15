@@ -8,13 +8,18 @@ from uuid import UUID
 from pydantic import Field
 
 from src.modules.contract_sections.model import SectionAppliesTo
+from src.modules.opportunities.model import OpportunityType
 from src.shared.schemas.base import APIModel
 
 
 class ContractSectionCreate(APIModel):
     title: str = Field(..., min_length=2, max_length=200)
     content_html: str = Field(..., min_length=1, max_length=50_000)
-    contract_type: SectionAppliesTo = SectionAppliesTo.SERVICO
+    contract_type: SectionAppliesTo = SectionAppliesTo.TODOS
+    opportunity_types: list[OpportunityType] = Field(
+        default_factory=lambda: list(OpportunityType),
+        min_length=1,
+    )
     sort_order: int = Field(default=0, ge=0)
     is_active: bool = True
     is_company_editable: bool = False
@@ -24,6 +29,7 @@ class ContractSectionUpdate(APIModel):
     title: str | None = Field(default=None, min_length=2, max_length=200)
     content_html: str | None = Field(default=None, min_length=1, max_length=50_000)
     contract_type: SectionAppliesTo | None = None
+    opportunity_types: list[OpportunityType] | None = Field(default=None, min_length=1)
     sort_order: int | None = Field(default=None, ge=0)
     is_active: bool | None = None
     is_company_editable: bool | None = None
@@ -49,11 +55,25 @@ class MinutaStructureResponse(APIModel):
     admin_sections: list[ContractSectionResponse]
 
 
+class ContractPreviewSection(APIModel):
+    title: str
+    content_html: str
+    is_system: bool = False
+
+
+class ContractPreviewResponse(APIModel):
+    opportunity_type: OpportunityType
+    title: str
+    html: str
+    sections: list[ContractPreviewSection]
+
+
 class ContractSectionResponse(APIModel):
     id: UUID
     title: str
     content_html: str
     contract_type: SectionAppliesTo
+    opportunity_types: list[OpportunityType] = Field(default_factory=list)
     sort_order: int
     created_by: UUID
     is_active: bool
@@ -70,6 +90,8 @@ class ContractSectionListResponse(APIModel):
 
 
 __all__ = [
+    "ContractPreviewResponse",
+    "ContractPreviewSection",
     "ContractSectionCreate",
     "ContractSectionListResponse",
     "ContractSectionReorder",

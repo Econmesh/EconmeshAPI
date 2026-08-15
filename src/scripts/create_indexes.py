@@ -30,6 +30,7 @@ from src.modules.contract_proposals.repository import ContractProposalsRepositor
 from src.modules.contract_sections.repository import ContractSectionsRepository
 from src.modules.support.repository import SupportMessagesRepository, SupportTicketsRepository
 from src.modules.users.repository import UsersRepository
+from src.modules.billing.repository import BillingRepository
 
 logger = get_logger(__name__)
 
@@ -57,6 +58,7 @@ async def _main() -> None:
         await ContractSectionsRepository(mongo.db).ensure_indexes()
         await ContractProposalsRepository(mongo.db).ensure_indexes()
         await UsersRepository(mongo.db).ensure_indexes()
+        await BillingRepository(mongo.db).ensure_indexes()
         logger.info("indexes_done")
     finally:
         await mongo.close()

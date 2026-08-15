@@ -7,7 +7,10 @@ from uuid import UUID
 
 from src.core.exceptions import NotFoundError, ValidationAppError
 from src.modules.contract_proposals.core_sections import CORE_SECTION_DEFINITIONS
+from src.modules.contract_proposals.opportunity_contract import minuta_title_for
+from src.modules.contract_proposals.pdf_service import build_core_sections_html
 from src.modules.contract_proposals.section_sync import (
+    proposal_opportunity_type,
     remove_template_section,
     reorder_proposal_sections,
     upsert_template_section,
@@ -19,6 +22,8 @@ from src.modules.contract_sections.model import (
 )
 from src.modules.contract_sections.repository import ContractSectionsRepository
 from src.modules.contract_sections.schema import (
+    ContractPreviewResponse,
+    ContractPreviewSection,
     ContractSectionCreate,
     ContractSectionListResponse,
     ContractSectionReorder,
@@ -27,6 +32,7 @@ from src.modules.contract_sections.schema import (
     MinutaStructureResponse,
     SystemSectionInfo,
 )
+from src.modules.opportunities.model import OpportunityType
 
 if TYPE_CHECKING:
     from src.modules.contract_proposals.repository import ContractProposalsRepository
@@ -38,6 +44,7 @@ def _to_response(doc: ContractSectionTemplateDocument) -> ContractSectionRespons
         title=doc.title,
         content_html=doc.content_html,
         contract_type=doc.contract_type,
+        opportunity_types=list(doc.opportunity_types or []),
         sort_order=doc.sort_order,
         created_by=doc.created_by,
         is_active=doc.is_active,
@@ -45,6 +52,18 @@ def _to_response(doc: ContractSectionTemplateDocument) -> ContractSectionRespons
         created_at=doc.created_at,
         updated_at=doc.updated_at,
     )
+
+
+def _system_sections() -> list[SystemSectionInfo]:
+    return [
+        SystemSectionInfo(
+            key=item["key"],
+            title=item["title"],
+            description=item["description"],
+            sort_order=item["sort_order"],
+        )
+        for item in CORE_SECTION_DEFINITIONS
+    ]
 
 
 class ContractSectionsService:
@@ -62,21 +81,19 @@ class ContractSectionsService:
         if self._proposals is None:
             return
         proposals = await self._proposals.list_negotiating(contract_types=None)
-        # Cache templates per contract type for correct admin ordering
-        templates_by_type: dict[ContractType, list[ContractSectionTemplateDocument]] = {}
+        templates_by_key: dict[str, list[ContractSectionTemplateDocument]] = {}
         for proposal in proposals:
             if not template.is_active:
                 if remove_template_section(proposal, template.id):
                     await self._proposals.replace(proposal)
                 continue
-            if proposal.contract_type not in templates_by_type:
-                templates_by_type[proposal.contract_type] = (
-                    await self._repo.list_active_by_type(proposal.contract_type)
-                )
+            cache_key = self._templates_cache_key(proposal)
+            if cache_key not in templates_by_key:
+                templates_by_key[cache_key] = await self._templates_for_proposal(proposal)
             if upsert_template_section(
                 proposal,
                 template,
-                all_templates=templates_by_type[proposal.contract_type],
+                all_templates=templates_by_key[cache_key],
             ):
                 await self._proposals.replace(proposal)
 
@@ -92,37 +109,106 @@ class ContractSectionsService:
         if self._proposals is None:
             return
         proposals = await self._proposals.list_negotiating(contract_types=None)
-        templates_by_type: dict[ContractType, list[ContractSectionTemplateDocument]] = {}
+        templates_by_key: dict[str, list[ContractSectionTemplateDocument]] = {}
         for proposal in proposals:
-            if proposal.contract_type not in templates_by_type:
-                templates_by_type[proposal.contract_type] = (
-                    await self._repo.list_active_by_type(proposal.contract_type)
-                )
-            if reorder_proposal_sections(
-                proposal, templates_by_type[proposal.contract_type]
-            ):
+            cache_key = self._templates_cache_key(proposal)
+            if cache_key not in templates_by_key:
+                templates_by_key[cache_key] = await self._templates_for_proposal(proposal)
+            if reorder_proposal_sections(proposal, templates_by_key[cache_key]):
                 await self._proposals.replace(proposal)
 
+    def _templates_cache_key(self, proposal) -> str:
+        opp_type = proposal_opportunity_type(proposal)
+        if opp_type is not None:
+            return f"opp:{opp_type}"
+        return f"ct:{proposal.contract_type}"
+
+    async def _templates_for_proposal(self, proposal):
+        opp_type = proposal_opportunity_type(proposal)
+        if opp_type is not None:
+            return await self._repo.list_active_by_opportunity_type(opp_type)
+        return await self._repo.list_active_by_type(proposal.contract_type)
+
     async def get_minuta_structure(
-        self, *, contract_type: SectionAppliesTo | None = None
+        self,
+        *,
+        contract_type: SectionAppliesTo | None = None,
+        opportunity_type: OpportunityType | None = None,
     ) -> MinutaStructureResponse:
         admin_sections = await self._repo.list_sections(
             skip=0,
             limit=500,
             contract_type=contract_type,
+            opportunity_type=opportunity_type,
             active_only=False,
         )
         return MinutaStructureResponse(
-            system_sections=[
-                SystemSectionInfo(
-                    key=item["key"],
-                    title=item["title"],
-                    description=item["description"],
-                    sort_order=item["sort_order"],
-                )
-                for item in CORE_SECTION_DEFINITIONS
-            ],
+            system_sections=_system_sections(),
             admin_sections=[_to_response(doc) for doc in admin_sections],
+        )
+
+    async def get_contract_preview(
+        self, *, opportunity_type: OpportunityType
+    ) -> ContractPreviewResponse:
+        core = build_core_sections_html(
+            contractor_block=(
+                "Empresa Contratante Exemplo Ltda., inscrita no CNPJ sob o nº "
+                "00.000.000/0001-00, com sede em São Paulo/SP."
+            ),
+            contracted_block=(
+                "Empresa Contratada Exemplo Ltda., inscrita no CNPJ sob o nº "
+                "00.000.000/0002-00, com sede em Campinas/SP."
+            ),
+            opportunity_title="Oportunidade de exemplo",
+            opportunity_description=(
+                "Descrição de exemplo da oportunidade negociada entre as PARTES."
+            ),
+            valor="R$ 1.000,00",
+            prazo="Contínua",
+            opportunity_type=opportunity_type.value,
+        )
+        templates = await self._repo.list_active_by_opportunity_type(opportunity_type)
+        sections: list[ContractPreviewSection] = [
+            ContractPreviewSection(title=title, content_html=html, is_system=True)
+            for title, html in core
+        ]
+        sections.extend(
+            ContractPreviewSection(
+                title=tmpl.title,
+                content_html=tmpl.content_html,
+                is_system=False,
+            )
+            for tmpl in templates
+        )
+        title = minuta_title_for(opportunity_type)
+        sections_html = "".join(
+            f"<h2>{section.title}</h2>"
+            f'<div class="section-body">{section.content_html}</div>'
+            for section in sections
+        )
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+body {{ font-family: Helvetica, Arial, sans-serif; font-size: 11pt;
+color: #111; line-height: 1.45; }}
+h1 {{ font-size: 16pt; text-align: center; margin-bottom: 24pt; }}
+h2 {{ font-size: 12pt; margin-top: 18pt; margin-bottom: 8pt;
+border-bottom: 1px solid #ccc; padding-bottom: 4pt; }}
+.section-body p {{ margin: 0 0 8pt 0; }}
+</style>
+</head>
+<body>
+<h1>{title}</h1>
+{sections_html}
+</body>
+</html>"""
+        return ContractPreviewResponse(
+            opportunity_type=opportunity_type,
+            title=title,
+            html=html,
+            sections=sections,
         )
 
     async def reorder(
@@ -159,6 +245,7 @@ class ContractSectionsService:
             title=payload.title,
             content_html=payload.content_html,
             contract_type=payload.contract_type,
+            opportunity_types=list(payload.opportunity_types),
             sort_order=payload.sort_order,
             created_by=created_by,
             is_active=payload.is_active,
@@ -180,6 +267,7 @@ class ContractSectionsService:
         page: int,
         page_size: int,
         contract_type: SectionAppliesTo | None = None,
+        opportunity_type: OpportunityType | None = None,
         active_only: bool = False,
     ) -> ContractSectionListResponse:
         skip = (page - 1) * page_size
@@ -187,10 +275,12 @@ class ContractSectionsService:
             skip=skip,
             limit=page_size,
             contract_type=contract_type,
+            opportunity_type=opportunity_type,
             active_only=active_only,
         )
         total = await self._repo.count_sections(
             contract_type=contract_type,
+            opportunity_type=opportunity_type,
             active_only=active_only,
         )
         return ContractSectionListResponse(

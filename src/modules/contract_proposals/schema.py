@@ -33,6 +33,7 @@ class OpportunitySnapshotInput(APIModel):
     price_negotiable: bool | None = None
     periodicity: str | None = Field(default=None, max_length=80)
     prazo: str | None = Field(default=None, max_length=300)
+    opportunity_type: str | None = Field(default=None, max_length=80)
 
 
 class ProposalSectionInput(APIModel):
@@ -48,7 +49,7 @@ class ProposalSectionInput(APIModel):
 
 class ContractProposalCreate(APIModel):
     conversation_id: UUID
-    contract_type: ContractType = ContractType.SERVICO
+    contract_type: ContractType | None = None
 
 
 class ContractProposalUpdate(APIModel):
@@ -91,6 +92,7 @@ class OpportunitySnapshotResponse(APIModel):
     price_negotiable: bool
     periodicity: str | None
     prazo: str | None
+    opportunity_type: str | None = None
 
 
 class ProposalSectionResponse(APIModel):
@@ -136,6 +138,7 @@ class ContractProposalListItem(APIModel):
     title: str
     status: ContractProposalStatus
     contract_type: ContractType
+    opportunity_type: str | None = None
     agreement_id: UUID | None
     created_at: datetime
     updated_at: datetime

@@ -87,11 +87,12 @@ async def _register_account(
     *,
     operating_license: UploadFile | None = None,
     mtr: UploadFile | None = None,
+    omit_mtr: bool = False,
 ):
     return await service.register(
         payload or _register_payload(),
         operating_license=operating_license or _pdf_upload("lo.pdf"),
-        mtr=mtr or _pdf_upload("mtr.pdf"),
+        mtr=None if omit_mtr else (mtr or _pdf_upload("mtr.pdf")),
     )
 
 
@@ -608,7 +609,7 @@ async def test_register_route_rejects_missing_company_contact_fields(client: Asy
     assert response.status_code == 422
 
 
-async def test_register_route_rejects_missing_document_file(client: AsyncClient) -> None:
+async def test_register_route_rejects_missing_operating_license(client: AsyncClient) -> None:
     data, files = _multipart(
         {
             "full_name": "Dave Doe",
@@ -616,13 +617,27 @@ async def test_register_route_rejects_missing_document_file(client: AsyncClient)
             "password": "supersecret",
             "company": _company_dict(),
         },
-        include_mtr=False,
+        include_license=False,
     )
     response = await client.post("/api/v1/auth/register", data=data, files=files)
     assert response.status_code == 422
     error_locs = [err.get("loc", []) for err in response.json()["details"]["errors"]]
     flat = {part for loc in error_locs for part in loc}
-    assert "mtr" in flat
+    assert "operating_license" in flat
+    assert "mtr" not in flat
+
+
+async def test_register_allows_missing_mtr() -> None:
+    service, repo, _verifications, fb = _build_service()
+    repo.get_by_email = AsyncMock(return_value=None)
+    repo.create_user = AsyncMock(side_effect=lambda user: user)
+
+    await _register_account(service, omit_mtr=True)
+
+    fb.upload_storage_bytes.assert_awaited_once()
+    created_company = service._companies.create.await_args.args[0]
+    assert created_company.operating_license is not None
+    assert created_company.mtr_document is None
 
 
 async def test_register_rejects_invalid_document_type() -> None:

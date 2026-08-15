@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import Query
@@ -131,10 +132,23 @@ class OpportunityMatch(APIModel):
     score: int = Field(..., ge=0, le=100)
     potential: MatchPotential
     details: MatchDetails
-    matched_demand: "OpportunityResponse"
+    matched_demand: OpportunityResponse
+
+
+class OpportunityPreviewResponse(APIModel):
+    """Public marketplace card fields for users without an active subscription."""
+
+    locked: Literal[True] = True
+    id: UUID
+    title: str
+    images: list[OpportunityImageResponse]
+    opportunity_type: OpportunityType
+    offer_demand: OfferDemand
+    category: str
 
 
 class OpportunityResponse(APIModel):
+    locked: Literal[False] = False
     id: UUID
     company_id: UUID
     company_name: str
@@ -162,13 +176,20 @@ class OpportunityResponse(APIModel):
     matching: OpportunityMatch | None = None
 
 
+OpportunityListItem = Annotated[
+    OpportunityResponse | OpportunityPreviewResponse,
+    Field(discriminator="locked"),
+]
+
+
 class OpportunityListResponse(APIModel):
-    items: list[OpportunityResponse]
+    items: list[OpportunityListItem]
     total: int = Field(..., ge=0)
     page: int = Field(..., ge=1)
     page_size: int = Field(..., ge=1)
     has_more: bool
     has_demands: bool = False
+    is_preview: bool = False
 
 
 class OpportunityListParams(APIModel):
@@ -239,6 +260,11 @@ class OpportunityImagePresignResponse(APIModel):
     expires_at: datetime
 
 
+OpportunityMatch.model_rebuild()
+OpportunityResponse.model_rebuild()
+OpportunityListResponse.model_rebuild()
+
+
 __all__ = [
     "MatchDetails",
     "MatchPotential",
@@ -247,9 +273,11 @@ __all__ = [
     "OpportunityImagePresignRequest",
     "OpportunityImagePresignResponse",
     "OpportunityImageResponse",
+    "OpportunityListItem",
     "OpportunityListParams",
     "OpportunityListResponse",
     "OpportunityMatch",
+    "OpportunityPreviewResponse",
     "OpportunityResponse",
     "OpportunityUpdate",
 ]

@@ -12,11 +12,16 @@ from src.modules.contract_proposals.model import (
     ContractProposalStatus,
     ProposalSection,
 )
+from src.modules.contract_sections.matching import (
+    opportunity_type_from_contract_type,
+    template_applies_to_opportunity_type,
+)
 from src.modules.contract_sections.model import (
     ContractSectionTemplateDocument,
     ContractType,
     SectionAppliesTo,
 )
+from src.modules.opportunities.model import OpportunityType
 
 NEGOTIATING_STATUSES: tuple[ContractProposalStatus, ...] = (
     ContractProposalStatus.DRAFT,
@@ -25,12 +30,30 @@ NEGOTIATING_STATUSES: tuple[ContractProposalStatus, ...] = (
 )
 
 
+def proposal_opportunity_type(
+    doc: ContractProposalDocument,
+) -> OpportunityType | str | None:
+    snap_type = getattr(doc.opportunity, "opportunity_type", None)
+    if snap_type:
+        return snap_type
+    return opportunity_type_from_contract_type(doc.contract_type)
+
+
 def proposal_matches_applies_to(
     proposal_type: ContractType, applies_to: SectionAppliesTo
 ) -> bool:
     if applies_to in (SectionAppliesTo.TODOS, SectionAppliesTo.OPORTUNIDADES):
         return True
     return proposal_type.value == applies_to.value
+
+
+def proposal_matches_template(
+    doc: ContractProposalDocument, tmpl: ContractSectionTemplateDocument
+) -> bool:
+    opp_type = proposal_opportunity_type(doc)
+    if opp_type:
+        return template_applies_to_opportunity_type(tmpl.opportunity_types, opp_type)
+    return proposal_matches_applies_to(doc.contract_type, tmpl.contract_type)
 
 
 def contract_types_for_applies_to(
@@ -178,9 +201,7 @@ def upsert_template_section(
     """Add or update an admin template section on a negotiating minuta."""
     if doc.status not in NEGOTIATING_STATUSES:
         return False
-    if not tmpl.is_active or not proposal_matches_applies_to(
-        doc.contract_type, tmpl.contract_type
-    ):
+    if not tmpl.is_active or not proposal_matches_template(doc, tmpl):
         removed = remove_template_section(doc, tmpl.id)
         if removed and all_templates is not None:
             reorder_proposal_sections(doc, all_templates)
@@ -229,6 +250,8 @@ __all__ = [
     "add_missing_admin_sections",
     "contract_types_for_applies_to",
     "proposal_matches_applies_to",
+    "proposal_matches_template",
+    "proposal_opportunity_type",
     "remove_template_section",
     "reorder_proposal_sections",
     "upsert_template_section",

@@ -44,6 +44,7 @@ class OpportunitySnapshot(BaseModel):
     price_negotiable: bool = False
     periodicity: str | None = None
     prazo: str | None = None
+    opportunity_type: str | None = None
 
 
 class ProposalSection(BaseModel):

@@ -35,6 +35,7 @@ from src.modules.conversations.repository import ConversationMessagesRepository
 from src.modules.notifications.repository import UserNotificationsRepository
 from src.modules.opportunities.repository import OpportunitiesRepository
 from src.modules.users.repository import UsersRepository
+from src.modules.billing.deps import require_active_subscription
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
 from src.shared.dependencies.redis import get_redis
@@ -43,7 +44,11 @@ if TYPE_CHECKING:
     from pymongo.asynchronous.database import AsyncDatabase
     from redis.asyncio import Redis
 
-router = APIRouter(prefix="/agreements", tags=["agreements"])
+router = APIRouter(
+    prefix="/agreements",
+    tags=["agreements"],
+    dependencies=[Depends(require_active_subscription)],
+)
 
 
 def _build_controller(

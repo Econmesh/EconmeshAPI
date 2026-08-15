@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -117,6 +118,32 @@ class AuthRepository:
         if email:
             query["email"] = {"$regex": email, "$options": "i"}
         return await self._collection.count_documents(query)
+
+    async def search(self, q: str, *, limit: int = 20) -> list[UserDocument]:
+        escaped = re.escape(q.strip()) if q.strip() else ""
+        if not escaped:
+            return []
+        query: dict[str, object] = {
+            "is_active": True,
+            "role": {"$ne": Role.ADMIN.value},
+            "$or": [
+                {"name": {"$regex": escaped, "$options": "i"}},
+                {"email": {"$regex": escaped, "$options": "i"}},
+            ],
+        }
+        cursor = (
+            self._collection.find(query).sort("created_at", ASCENDING).limit(limit)
+        )
+        docs = await cursor.to_list(length=limit)
+        items: list[UserDocument] = []
+        for doc in docs:
+            if doc.get("email") == "":
+                doc["email"] = None
+            try:
+                items.append(UserDocument.model_validate(doc))
+            except Exception:  # noqa: BLE001
+                continue
+        return items
 
     async def list_admins(self) -> list[UserDocument]:
         cursor = self._collection.find(

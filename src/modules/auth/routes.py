@@ -56,6 +56,12 @@ def _build_controller(
 ControllerDep = Annotated[AuthController, Depends(_build_controller)]
 
 
+def _optional_upload(file: UploadFile | None) -> UploadFile | None:
+    if file is None or not (file.filename or "").strip():
+        return None
+    return file
+
+
 @router.post(
     "/register",
     response_model=RegisterResponse,
@@ -66,14 +72,14 @@ async def register(
     controller: ControllerDep,
     payload: Annotated[str, Form()],
     operating_license: Annotated[UploadFile, File()],
-    mtr: Annotated[UploadFile, File()],
+    mtr: Annotated[UploadFile | None, File()] = None,
 ) -> RegisterResponse:
     try:
         body = RegisterRequest.model_validate_json(payload)
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
     return await controller.register(
-        body, operating_license=operating_license, mtr=mtr
+        body, operating_license=operating_license, mtr=_optional_upload(mtr)
     )
 
 

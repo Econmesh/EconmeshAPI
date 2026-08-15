@@ -38,11 +38,13 @@ from src.modules.agreements.service import AgreementsService
 from src.modules.auth.repository import AuthRepository, EmailVerificationRepository
 from src.modules.auth.schema import MeResponse, RegisterResponse
 from src.modules.auth.service import AuthService
+from src.modules.billing.deps import build_billing_service
 from src.modules.companies.compliance_review import build_compliance_review_service
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.companies.schema import CompanyDocumentReject, CompanyResponse, CompanyUpdate
 from src.modules.companies.service import CompaniesService
 from src.modules.conversations.repository import ConversationMessagesRepository
+from src.modules.opportunities.model import OpportunityType
 from src.modules.opportunities.repository import OpportunitiesRepository
 from src.modules.opportunities.schema import (
     OpportunityListParams,
@@ -63,6 +65,7 @@ from src.modules.contract_sections.controller import AdminContractSectionsContro
 from src.modules.contract_sections.deps import build_admin_contract_sections_controller
 from src.modules.contract_sections.model import SectionAppliesTo
 from src.modules.contract_sections.schema import (
+    ContractPreviewResponse,
     ContractSectionCreate,
     ContractSectionListResponse,
     ContractSectionReorder,
@@ -174,7 +177,10 @@ def _build_controller(
     )
     opportunities_repo = OpportunitiesRepository(db)
     opportunities_service = OpportunitiesService(
-        opportunities_repo, auth_repo, companies_repo
+        opportunities_repo,
+        auth_repo,
+        companies_repo,
+        build_billing_service(db),
     )
     service = AdminService(
         auth_repository=auth_repo,
@@ -663,12 +669,14 @@ async def list_contract_sections(
     controller: ContractSectionsControllerDep,
     pagination: Annotated[PaginationParams, Depends(PaginationParams.as_query)],
     contract_type: SectionAppliesTo | None = Query(default=None),
+    opportunity_type: OpportunityType | None = Query(default=None),
     active_only: bool = Query(default=False),
 ) -> ContractSectionListResponse:
     return await controller.list(
         page=pagination.page,
         page_size=pagination.page_size,
         contract_type=contract_type,
+        opportunity_type=opportunity_type,
         active_only=active_only,
     )
 
@@ -681,8 +689,24 @@ async def list_contract_sections(
 async def get_contract_sections_structure(
     controller: ContractSectionsControllerDep,
     contract_type: SectionAppliesTo | None = Query(default=None),
+    opportunity_type: OpportunityType | None = Query(default=None),
 ) -> MinutaStructureResponse:
-    return await controller.get_structure(contract_type=contract_type)
+    return await controller.get_structure(
+        contract_type=contract_type,
+        opportunity_type=opportunity_type,
+    )
+
+
+@router.get(
+    "/contract-sections/preview",
+    response_model=ContractPreviewResponse,
+    summary="Preview the composed contract for an opportunity type.",
+)
+async def get_contract_sections_preview(
+    controller: ContractSectionsControllerDep,
+    opportunity_type: OpportunityType = Query(...),
+) -> ContractPreviewResponse:
+    return await controller.get_preview(opportunity_type=opportunity_type)
 
 
 @router.put(

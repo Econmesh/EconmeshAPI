@@ -6,6 +6,9 @@ from enum import StrEnum
 from typing import ClassVar
 from uuid import UUID
 
+from pydantic import Field
+
+from src.modules.opportunities.model import OpportunityType
 from src.shared.schemas.base import DomainDocument
 
 
@@ -37,7 +40,10 @@ class ContractSectionTemplateDocument(DomainDocument):
     title: str
     content_html: str
     # Kept as contract_type for API/DB compatibility; values include applies-to scopes.
-    contract_type: SectionAppliesTo = SectionAppliesTo.SERVICO
+    contract_type: SectionAppliesTo = SectionAppliesTo.TODOS
+    opportunity_types: list[OpportunityType] = Field(
+        default_factory=lambda: list(OpportunityType)
+    )
     sort_order: int = 0
     created_by: UUID
     is_active: bool = True

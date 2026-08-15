@@ -10,9 +10,10 @@ from fastapi import UploadFile
 from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from src.core.firebase import firebase
 from src.modules.auth.repository import AuthRepository
+from src.modules.billing.service import BillingService
 from src.modules.companies.repository import CompaniesRepository
-from src.modules.opportunities.model import OfferDemand, OpportunityDocument, OpportunityImage
 from src.modules.opportunities.matching_service import MatchingService
+from src.modules.opportunities.model import OfferDemand, OpportunityDocument, OpportunityImage
 from src.modules.opportunities.repository import OpportunitiesRepository
 from src.modules.opportunities.schema import (
     OpportunityCreate,
@@ -20,8 +21,10 @@ from src.modules.opportunities.schema import (
     OpportunityImagePresignRequest,
     OpportunityImagePresignResponse,
     OpportunityImageResponse,
+    OpportunityListItem,
     OpportunityListParams,
     OpportunityListResponse,
+    OpportunityPreviewResponse,
     OpportunityResponse,
     OpportunityUpdate,
 )
@@ -44,10 +47,12 @@ class OpportunitiesService:
         repository: OpportunitiesRepository,
         auth_repository: AuthRepository,
         companies_repository: CompaniesRepository,
+        billing_service: BillingService,
     ) -> None:
         self._repo = repository
         self._auth_repo = auth_repository
         self._companies_repo = companies_repository
+        self._billing = billing_service
 
     async def _resolve_user_id(self, firebase_uid: str) -> UUID:
         user = await self._auth_repo.get_by_firebase_uid(firebase_uid)
@@ -80,6 +85,25 @@ class OpportunitiesService:
                 )
             )
         return normalized
+
+    async def _user_has_access(self, firebase_uid: str, *, is_admin: bool) -> bool:
+        if is_admin:
+            return True
+        me = await self._billing.get_me(firebase_uid=firebase_uid, is_admin=False)
+        return me.has_access
+
+    def _to_preview(self, doc: OpportunityDocument) -> OpportunityPreviewResponse:
+        return OpportunityPreviewResponse(
+            id=doc.id,
+            title=doc.title,
+            images=[
+                OpportunityImageResponse.model_validate(img.model_dump())
+                for img in doc.images
+            ],
+            opportunity_type=doc.opportunity_type,
+            offer_demand=doc.offer_demand,
+            category=doc.category,
+        )
 
     def _to_response(self, doc: OpportunityDocument) -> OpportunityResponse:
         return OpportunityResponse(
@@ -124,12 +148,28 @@ class OpportunitiesService:
         return company_name, company.owner_user_id
 
     async def list(
-        self, params: OpportunityListParams, *, firebase_uid: str
+        self,
+        params: OpportunityListParams,
+        *,
+        firebase_uid: str,
+        is_admin: bool = False,
     ) -> OpportunityListResponse:
         owner_user_id = await self._resolve_user_id(firebase_uid)
         docs = await self._repo.list_filtered(params)
         total = await self._repo.count_filtered(params)
         has_more = params.page * params.page_size < total
+
+        has_access = await self._user_has_access(firebase_uid, is_admin=is_admin)
+        if not has_access:
+            return OpportunityListResponse(
+                items=[self._to_preview(doc) for doc in docs],
+                total=total,
+                page=params.page,
+                page_size=params.page_size,
+                has_more=has_more,
+                has_demands=False,
+                is_preview=True,
+            )
 
         demands = await self._repo.list_demands_for_owner(owner_user_id)
         has_demands = len(demands) > 0
@@ -137,7 +177,7 @@ class OpportunitiesService:
             str(demand.id): self._to_response(demand) for demand in demands
         }
 
-        items: list[OpportunityResponse] = []
+        items: list[OpportunityListItem] = []
         for doc in docs:
             response = self._to_response(doc)
             if (
@@ -161,6 +201,7 @@ class OpportunitiesService:
             page_size=params.page_size,
             has_more=has_more,
             has_demands=has_demands,
+            is_preview=False,
         )
 
     async def get(
