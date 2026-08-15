@@ -81,26 +81,28 @@ def build_core_sections_html(
     opportunity_description: str,
     valor: str,
     prazo: str,
+    opportunity_type: str | None = None,
 ) -> list[tuple[str, str]]:
     """Return (title, content_html) for the four fixed core minuta sections."""
     from src.modules.contract_proposals.core_sections import CORE_SECTION_DEFINITIONS
+    from src.modules.contract_proposals.opportunity_contract import objeto_html, valor_html
 
     partes = f"""
 <p><strong>CONTRATANTE:</strong> {contractor_block}</p>
 <p><strong>CONTRATADA:</strong> {contracted_block}</p>
 <p>De forma global denominadas <strong>PARTES</strong> ou individualmente <strong>PARTE</strong>.</p>
 """
-    objeto = f"""
-<p>A CONTRATADA prestará os serviços relacionados à oportunidade <strong>{opportunity_title}</strong>,
-conforme condições acordadas entre as PARTES.</p>
-<p>{opportunity_description}</p>
-"""
-    valor_html = f"<p>O valor acordado para execução dos serviços será de <strong>{valor}</strong>.</p>"
+    objeto = objeto_html(
+        opportunity_type=opportunity_type,
+        opportunity_title=opportunity_title,
+        opportunity_description=opportunity_description,
+    )
+    valor_section = valor_html(opportunity_type=opportunity_type, valor=valor)
     prazo_html = f"<p>O prazo para execução será de <strong>{prazo}</strong>.</p>"
     contents = {
         "partes": partes,
         "objeto": objeto,
-        "valor": valor_html,
+        "valor": valor_section,
         "prazo": prazo_html,
     }
     return [

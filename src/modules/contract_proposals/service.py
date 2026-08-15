@@ -20,6 +20,10 @@ from src.modules.contract_proposals.model import (
     ProposalPdfFile,
     ProposalSection,
 )
+from src.modules.contract_proposals.opportunity_contract import (
+    contract_type_for,
+    minuta_title_for,
+)
 from src.modules.contract_proposals.pdf_service import (
     build_core_sections_html,
     pdf_page_count,
@@ -46,6 +50,7 @@ from src.modules.contract_proposals.schema import (
 from src.modules.contract_proposals.section_sync import (
     NEGOTIATING_STATUSES,
     add_missing_admin_sections,
+    proposal_opportunity_type,
 )
 from src.modules.contract_sections.repository import ContractSectionsRepository
 from src.modules.conversations.model import (
@@ -195,7 +200,11 @@ class ContractProposalsService:
         """
         if doc.status not in NEGOTIATING_STATUSES:
             return doc
-        templates = await self._sections.list_active_by_type(doc.contract_type)
+        opp_type = proposal_opportunity_type(doc)
+        if opp_type is not None:
+            templates = await self._sections.list_active_by_opportunity_type(opp_type)
+        else:
+            templates = await self._sections.list_active_by_type(doc.contract_type)
         template_ids = {t.id for t in templates}
         changed = False
         filtered: list[ProposalSection] = []
@@ -295,6 +304,9 @@ class ContractProposalsService:
             price_negotiable=opportunity.price_negotiable,
             periodicity=str(opportunity.periodicity) if opportunity.periodicity else None,
             prazo=periodicity_label,
+            opportunity_type=str(opportunity.opportunity_type)
+            if opportunity.opportunity_type
+            else None,
         )
 
         valor = _format_price(opportunity.price, opportunity.price_negotiable)
@@ -306,6 +318,7 @@ class ContractProposalsService:
             opportunity_description=opportunity.description,
             valor=valor,
             prazo=prazo,
+            opportunity_type=opp_snap.opportunity_type,
         )
         sections: list[ProposalSection] = []
         for idx, (title, html) in enumerate(core):
@@ -320,7 +333,14 @@ class ContractProposalsService:
                 )
             )
 
-        templates = await self._sections.list_active_by_type(payload.contract_type)
+        if opp_snap.opportunity_type:
+            templates = await self._sections.list_active_by_opportunity_type(
+                opp_snap.opportunity_type
+            )
+        else:
+            templates = await self._sections.list_active_by_type(
+                payload.contract_type or contract_type_for(None)
+            )
         base = len(sections)
         for offset, tmpl in enumerate(templates):
             sections.append(
@@ -343,8 +363,8 @@ class ContractProposalsService:
             offerer_user_id=conversation.offerer_user_id,
             interested_user_id=conversation.interested_user_id,
             created_by_user_id=user.id,
-            title="MINUTA DE CONTRATO DE PRESTAÇÃO DE SERVIÇOS",
-            contract_type=payload.contract_type,
+            title=minuta_title_for(opp_snap.opportunity_type),
+            contract_type=contract_type_for(opp_snap.opportunity_type),
             status=ContractProposalStatus.DRAFT,
             contractor=contractor,
             contracted=contracted,
@@ -395,6 +415,7 @@ class ContractProposalsService:
                     title=d.title,
                     status=d.status,
                     contract_type=d.contract_type,
+                    opportunity_type=d.opportunity.opportunity_type,
                     agreement_id=d.agreement_id,
                     created_at=d.created_at,
                     updated_at=d.updated_at,
@@ -821,6 +842,7 @@ class ContractProposalsService:
                     title=d.title,
                     status=d.status,
                     contract_type=d.contract_type,
+                    opportunity_type=d.opportunity.opportunity_type,
                     agreement_id=d.agreement_id,
                     created_at=d.created_at,
                     updated_at=d.updated_at,

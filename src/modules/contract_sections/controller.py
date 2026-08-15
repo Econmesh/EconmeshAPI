@@ -6,6 +6,7 @@ from uuid import UUID
 
 from src.modules.contract_sections.model import ContractType, SectionAppliesTo
 from src.modules.contract_sections.schema import (
+    ContractPreviewResponse,
     ContractSectionCreate,
     ContractSectionListResponse,
     ContractSectionReorder,
@@ -14,6 +15,7 @@ from src.modules.contract_sections.schema import (
     MinutaStructureResponse,
 )
 from src.modules.contract_sections.service import ContractSectionsService
+from src.modules.opportunities.model import OpportunityType
 
 
 class AdminContractSectionsController:
@@ -34,19 +36,34 @@ class AdminContractSectionsController:
         page: int,
         page_size: int,
         contract_type: SectionAppliesTo | None = None,
+        opportunity_type: OpportunityType | None = None,
         active_only: bool = False,
     ) -> ContractSectionListResponse:
         return await self._service.list(
             page=page,
             page_size=page_size,
             contract_type=contract_type,
+            opportunity_type=opportunity_type,
             active_only=active_only,
         )
 
     async def get_structure(
-        self, *, contract_type: SectionAppliesTo | None = None
+        self,
+        *,
+        contract_type: SectionAppliesTo | None = None,
+        opportunity_type: OpportunityType | None = None,
     ) -> MinutaStructureResponse:
-        return await self._service.get_minuta_structure(contract_type=contract_type)
+        return await self._service.get_minuta_structure(
+            contract_type=contract_type,
+            opportunity_type=opportunity_type,
+        )
+
+    async def get_preview(
+        self, *, opportunity_type: OpportunityType
+    ) -> ContractPreviewResponse:
+        return await self._service.get_contract_preview(
+            opportunity_type=opportunity_type
+        )
 
     async def reorder(
         self, payload: ContractSectionReorder
