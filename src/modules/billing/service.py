@@ -21,19 +21,25 @@ from src.modules.auth.model import UserDocument
 from src.modules.auth.repository import AuthRepository
 from src.modules.billing.model import (
     ACCESS_STATUSES,
+    OPEN_SUBSCRIPTION_STATUSES,
+    BillingAccessGrantDocument,
     BillingCouponDocument,
     BillingInvoiceDocument,
     BillingPlanDocument,
     BillingSettingsDocument,
     BillingSubscriptionDocument,
-    BillingType,
     CouponDiscountType,
     InvoiceStatus,
-    OPEN_SUBSCRIPTION_STATUSES,
     SubscriptionStatus,
 )
 from src.modules.billing.repository import BillingRepository
 from src.modules.billing.schema import (
+    AccessGrantCreate,
+    AccessGrantListParams,
+    AccessGrantListResponse,
+    AccessGrantResponse,
+    AccessGrantTarget,
+    AccessGrantTargetListResponse,
     AdminPendingUserItem,
     AdminPendingUserListResponse,
     AdminSubscriptionListItem,
@@ -61,6 +67,7 @@ from src.modules.billing.schema import (
 from src.modules.companies.model import CompanyDocument
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.users.repository import UsersRepository
+from src.shared.constants.roles import Role
 from src.shared.schemas.pagination import PaginationParams
 from src.shared.schemas.responses import MessageResponse
 from src.shared.utils.time import utcnow
@@ -326,6 +333,12 @@ class BillingService:
                 subscription = await self._refresh_pending_from_asaas(subscription)
         status = subscription.status if subscription else SubscriptionStatus.PENDING
         has_access = self._has_access(subscription, settings)
+        grant_expires_at = None
+        if company:
+            grant = await self._repo.access_grants.get_active_for_company(company.id)
+            if grant is not None:
+                grant_expires_at = grant.expires_at
+                has_access = True
         plan_name = None
         if subscription:
             plan = await self._repo.plans.get(subscription.plan_id)
@@ -338,6 +351,7 @@ class BillingService:
             subscription=(
                 self._subscription_response(subscription, plan_name) if subscription else None
             ),
+            access_grant_expires_at=grant_expires_at,
             trial_enabled=settings.trial_enabled,
             trial_days=settings.default_trial_days,
             allowed_billing_types=settings.allowed_billing_types,
@@ -597,10 +611,12 @@ class BillingService:
         self, pagination: PaginationParams
     ) -> AdminPendingUserListResponse:
         subscribed_ids = await self._repo.subscriptions.company_ids_with_access()
+        grant_ids = await self._repo.access_grants.company_ids_with_active_grant()
+        excluded_ids = subscribed_ids | grant_ids
         companies = await self._companies_repo.list_active_except(
-            subscribed_ids, skip=pagination.skip, limit=pagination.limit
+            excluded_ids, skip=pagination.skip, limit=pagination.limit
         )
-        total = await self._companies_repo.count_active_except(subscribed_ids)
+        total = await self._companies_repo.count_active_except(excluded_ids)
         owners = await self._auth_repo.get_by_ids([c.owner_user_id for c in companies])
         owners_map = {u.id: u for u in owners}
         items = [
@@ -625,6 +641,182 @@ class BillingService:
             page=pagination.page,
             page_size=pagination.page_size,
         )
+
+    async def admin_create_access_grant(
+        self, payload: AccessGrantCreate, *, firebase_uid: str
+    ) -> AccessGrantResponse:
+        admin = await self._resolve_user(firebase_uid)
+        company: CompanyDocument | None = None
+        beneficiary: UserDocument | None = None
+        if payload.company_id is not None:
+            company = await self._companies_repo.get(payload.company_id)
+            if company is None or not company.is_active:
+                raise NotFoundError("Empresa não encontrada.", code="company_not_found")
+            beneficiary = await self._auth_repo.get_by_id(
+                payload.user_id or company.owner_user_id
+            )
+            if beneficiary is None:
+                beneficiary = await self._auth_repo.get_by_id(company.owner_user_id)
+        elif payload.user_id is not None:
+            beneficiary = await self._auth_repo.get_by_id(payload.user_id)
+            if beneficiary is not None:
+                company = await self._resolve_company(beneficiary)
+        if beneficiary is None:
+            raise NotFoundError("Usuário não encontrado.", code="user_not_found")
+        if company is None:
+            raise ValidationAppError(
+                "O usuário precisa ter uma empresa cadastrada.",
+                code="company_required",
+            )
+        expires_at = payload.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        else:
+            expires_at = expires_at.astimezone(UTC)
+        if expires_at <= utcnow():
+            raise ValidationAppError(
+                "O prazo deve ser uma data futura.",
+                code="expires_at_invalid",
+            )
+        await self._repo.access_grants.revoke_active_for_company(company.id)
+        grant = BillingAccessGrantDocument(
+            company_id=company.id,
+            user_id=beneficiary.id,
+            expires_at=expires_at,
+            reason=payload.reason,
+            granted_by_user_id=admin.id,
+        )
+        created = await self._repo.access_grants.create(grant)
+        items = await self._access_grant_items([created])
+        return items[0]
+
+    async def admin_search_access_grant_targets(
+        self, q: str
+    ) -> AccessGrantTargetListResponse:
+        try:
+            companies = await self._companies_repo.list_all(skip=0, limit=200)
+        except Exception:  # noqa: BLE001
+            logger.exception("access_grant_target_company_list_failed")
+            companies = []
+        try:
+            owners = await self._auth_repo.get_by_ids(
+                [c.owner_user_id for c in companies], active_only=False
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("access_grant_target_owners_failed")
+            owners = []
+        owners_map = {u.id: u for u in owners}
+        items: list[AccessGrantTarget] = []
+        for company in companies:
+            owner = owners_map.get(company.owner_user_id)
+            if owner is not None and owner.role == Role.ADMIN:
+                continue
+            items.append(
+                AccessGrantTarget(
+                    user_id=company.owner_user_id,
+                    user_name=owner.name if owner else None,
+                    user_email=str(owner.email) if owner and owner.email else None,
+                    user_phone=owner.phone if owner else None,
+                    company_id=company.id,
+                    company_name=company.trade_name or company.legal_name,
+                )
+            )
+        query = q.strip().lower()
+        if query:
+            items = [
+                item
+                for item in items
+                if query
+                in " ".join(
+                    part
+                    for part in (
+                        item.user_name,
+                        item.user_email,
+                        item.user_phone,
+                        item.company_name,
+                    )
+                    if part
+                ).lower()
+            ]
+        return AccessGrantTargetListResponse(items=items)
+
+    async def admin_list_access_grants(
+        self, params: AccessGrantListParams
+    ) -> AccessGrantListResponse:
+        items = await self._repo.access_grants.list_all(
+            skip=params.skip,
+            limit=params.page_size,
+            user_id=params.user_id,
+            active_only=params.active_only,
+        )
+        total = await self._repo.access_grants.count(
+            user_id=params.user_id,
+            active_only=params.active_only,
+        )
+        return AccessGrantListResponse(
+            items=await self._access_grant_items(items),
+            total=total,
+            page=params.page,
+            page_size=params.page_size,
+        )
+
+    async def admin_revoke_access_grant(self, grant_id: UUID) -> AccessGrantResponse:
+        grant = await self._repo.access_grants.get(grant_id)
+        if grant is None:
+            raise NotFoundError(
+                "Liberação excepcional não encontrada.",
+                code="access_grant_not_found",
+            )
+        if grant.revoked_at is not None:
+            items = await self._access_grant_items([grant])
+            return items[0]
+        revoked = await self._repo.access_grants.revoke(grant_id)
+        if revoked is None:
+            raise NotFoundError(
+                "Liberação excepcional não encontrada.",
+                code="access_grant_not_found",
+            )
+        items = await self._access_grant_items([revoked])
+        return items[0]
+
+    async def _access_grant_items(
+        self, grants: list[BillingAccessGrantDocument]
+    ) -> list[AccessGrantResponse]:
+        now = utcnow()
+        company_map = await self._companies_repo.get_many([g.company_id for g in grants])
+        user_ids = [g.user_id for g in grants] + [g.granted_by_user_id for g in grants]
+        users = await self._auth_repo.get_by_ids(user_ids, active_only=False)
+        user_map = {u.id: u for u in users}
+        items: list[AccessGrantResponse] = []
+        for grant in grants:
+            company = company_map.get(grant.company_id)
+            user = user_map.get(grant.user_id)
+            granter = user_map.get(grant.granted_by_user_id)
+            expires_at = grant.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            is_active = grant.revoked_at is None and expires_at > now
+            items.append(
+                AccessGrantResponse(
+                    id=grant.id,
+                    company_id=grant.company_id,
+                    company_name=(
+                        (company.trade_name or company.legal_name) if company else None
+                    ),
+                    user_id=grant.user_id,
+                    user_name=user.name if user else None,
+                    user_email=str(user.email) if user and user.email else None,
+                    expires_at=grant.expires_at,
+                    reason=grant.reason,
+                    granted_by_user_id=grant.granted_by_user_id,
+                    granted_by_name=granter.name if granter else None,
+                    revoked_at=grant.revoked_at,
+                    is_active=is_active,
+                    created_at=grant.created_at,
+                    updated_at=grant.updated_at,
+                )
+            )
+        return items
 
     async def _admin_subscription_items(
         self, subscriptions: list[BillingSubscriptionDocument]

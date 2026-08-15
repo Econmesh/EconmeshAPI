@@ -5,14 +5,19 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from src.modules.billing.controller import AdminBillingController
 from src.modules.billing.deps import build_admin_billing_controller
 from src.modules.billing.schema import (
+    AccessGrantCreate,
+    AccessGrantListParams,
+    AccessGrantListResponse,
+    AccessGrantResponse,
+    AccessGrantTargetListResponse,
     AdminPendingUserListResponse,
-    AdminSubscriptionListParams,
     AdminSubscriptionListItem,
+    AdminSubscriptionListParams,
     AdminSubscriptionListResponse,
     BillingCouponCreate,
     BillingCouponListResponse,
@@ -27,6 +32,7 @@ from src.modules.billing.schema import (
     BillingSettingsUpdate,
 )
 from src.shared.constants.roles import Role
+from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
 from src.shared.dependencies.rbac import require_role
 from src.shared.schemas.pagination import PaginationParams
@@ -151,6 +157,45 @@ async def list_subscription_invoices(
     pagination: Annotated[PaginationParams, Depends(PaginationParams.as_query)],
 ) -> BillingInvoiceListResponse:
     return await controller.list_subscription_invoices(subscription_id, pagination)
+
+
+@router.get("/access-grant-targets", response_model=AccessGrantTargetListResponse)
+async def search_access_grant_targets(
+    controller: ControllerDep,
+    q: str = Query("", max_length=200),
+) -> AccessGrantTargetListResponse:
+    return await controller.search_access_grant_targets(q)
+
+
+@router.get("/access-grants", response_model=AccessGrantListResponse)
+async def list_access_grants(
+    controller: ControllerDep,
+    params: Annotated[AccessGrantListParams, Depends(AccessGrantListParams.as_query)],
+) -> AccessGrantListResponse:
+    return await controller.list_access_grants(params)
+
+
+@router.post(
+    "/access-grants",
+    response_model=AccessGrantResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_access_grant(
+    payload: AccessGrantCreate,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
+) -> AccessGrantResponse:
+    return await controller.create_access_grant(payload, firebase_uid=current_user.uid)
+
+
+@router.post(
+    "/access-grants/{grant_id}/revoke",
+    response_model=AccessGrantResponse,
+)
+async def revoke_access_grant(
+    grant_id: UUID, controller: ControllerDep
+) -> AccessGrantResponse:
+    return await controller.revoke_access_grant(grant_id)
 
 
 __all__ = ["router"]

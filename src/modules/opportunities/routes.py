@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, UploadFile, status
 
 from src.modules.auth.repository import AuthRepository
+from src.modules.billing.deps import build_billing_service, require_active_subscription
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.opportunities.controller import OpportunitiesController
 from src.modules.opportunities.repository import OpportunitiesRepository
@@ -21,7 +22,6 @@ from src.modules.opportunities.schema import (
     OpportunityUpdate,
 )
 from src.modules.opportunities.service import OpportunitiesService
-from src.modules.billing.deps import require_active_subscription
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
 from src.shared.schemas.responses import StorageUploadResponse
@@ -32,8 +32,9 @@ if TYPE_CHECKING:
 router = APIRouter(
     prefix="/opportunities",
     tags=["opportunities"],
-    dependencies=[Depends(require_active_subscription)],
 )
+
+_SUBSCRIPTION_REQUIRED = [Depends(require_active_subscription)]
 
 
 def _build_controller(
@@ -42,7 +43,9 @@ def _build_controller(
     repo = OpportunitiesRepository(db)
     auth_repo = AuthRepository(db)
     companies_repo = CompaniesRepository(db)
-    service = OpportunitiesService(repo, auth_repo, companies_repo)
+    service = OpportunitiesService(
+        repo, auth_repo, companies_repo, build_billing_service(db)
+    )
     return OpportunitiesController(service)
 
 
@@ -68,6 +71,7 @@ async def list_opportunities(
     response_model=OpportunityResponse,
     summary="Create a new opportunity.",
     status_code=status.HTTP_201_CREATED,
+    dependencies=_SUBSCRIPTION_REQUIRED,
 )
 async def create_opportunity(
     payload: OpportunityCreate,
@@ -82,6 +86,7 @@ async def create_opportunity(
     response_model=OpportunityImagePresignResponse,
     summary="Request a presigned URL to upload an opportunity image.",
     status_code=status.HTTP_200_OK,
+    dependencies=_SUBSCRIPTION_REQUIRED,
 )
 async def presign_opportunity_image(
     payload: OpportunityImagePresignRequest,
@@ -96,6 +101,7 @@ async def presign_opportunity_image(
     response_model=StorageUploadResponse,
     summary="Upload an opportunity image via the API (avoids browser CORS to Storage).",
     status_code=status.HTTP_200_OK,
+    dependencies=_SUBSCRIPTION_REQUIRED,
 )
 async def upload_opportunity_image(
     controller: ControllerDep,
@@ -110,6 +116,7 @@ async def upload_opportunity_image(
     response_model=OpportunityResponse,
     summary="Get opportunity details.",
     status_code=status.HTTP_200_OK,
+    dependencies=_SUBSCRIPTION_REQUIRED,
 )
 async def get_opportunity(
     opportunity_id: UUID,
@@ -124,6 +131,7 @@ async def get_opportunity(
     response_model=OpportunityResponse,
     summary="Update an opportunity.",
     status_code=status.HTTP_200_OK,
+    dependencies=_SUBSCRIPTION_REQUIRED,
 )
 async def update_opportunity(
     opportunity_id: UUID,
@@ -138,6 +146,7 @@ async def update_opportunity(
     "/{opportunity_id}",
     summary="Soft-delete an opportunity.",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=_SUBSCRIPTION_REQUIRED,
 )
 async def delete_opportunity(
     opportunity_id: UUID,

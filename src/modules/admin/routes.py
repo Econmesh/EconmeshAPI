@@ -38,6 +38,7 @@ from src.modules.agreements.service import AgreementsService
 from src.modules.auth.repository import AuthRepository, EmailVerificationRepository
 from src.modules.auth.schema import MeResponse, RegisterResponse
 from src.modules.auth.service import AuthService
+from src.modules.billing.deps import build_billing_service
 from src.modules.companies.compliance_review import build_compliance_review_service
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.companies.schema import CompanyDocumentReject, CompanyResponse, CompanyUpdate
@@ -174,7 +175,10 @@ def _build_controller(
     )
     opportunities_repo = OpportunitiesRepository(db)
     opportunities_service = OpportunitiesService(
-        opportunities_repo, auth_repo, companies_repo
+        opportunities_repo,
+        auth_repo,
+        companies_repo,
+        build_billing_service(db),
     )
     service = AdminService(
         auth_repository=auth_repo,

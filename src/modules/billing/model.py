@@ -164,6 +164,17 @@ class BillingWebhookEventDocument(DomainDocument):
     processed: bool = True
 
 
+class BillingAccessGrantDocument(DomainDocument):
+    collection_name: ClassVar[str] = "billing_access_grants"
+
+    company_id: UUID
+    user_id: UUID
+    expires_at: datetime
+    reason: str | None = None
+    granted_by_user_id: UUID
+    revoked_at: datetime | None = None
+
+
 def new_plan_id() -> UUID:
     return new_uuid()
 
@@ -171,6 +182,7 @@ def new_plan_id() -> UUID:
 __all__ = [
     "ACCESS_STATUSES",
     "BILLING_SETTINGS_ID",
+    "BillingAccessGrantDocument",
     "BillingCouponDocument",
     "BillingInvoiceDocument",
     "BillingPlanDocument",

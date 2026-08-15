@@ -10,13 +10,14 @@ from pymongo.errors import DuplicateKeyError
 
 from src.modules.billing.model import (
     BILLING_SETTINGS_ID,
+    OPEN_SUBSCRIPTION_STATUSES,
+    BillingAccessGrantDocument,
     BillingCouponDocument,
     BillingInvoiceDocument,
     BillingPlanDocument,
     BillingSettingsDocument,
     BillingSubscriptionDocument,
     BillingWebhookEventDocument,
-    OPEN_SUBSCRIPTION_STATUSES,
     SubscriptionStatus,
 )
 from src.shared.utils.time import utcnow
@@ -393,6 +394,110 @@ class BillingWebhookEventsRepository:
         await self._collection.delete_one({"asaas_event_id": asaas_event_id})
 
 
+class BillingAccessGrantsRepository:
+    COLLECTION: str = BillingAccessGrantDocument.collection_name
+
+    def __init__(self, db: AsyncDatabase) -> None:
+        self._collection: AsyncCollection = db[self.COLLECTION]
+
+    async def ensure_indexes(self) -> None:
+        await self._collection.create_index(
+            [("company_id", ASCENDING), ("revoked_at", ASCENDING), ("expires_at", DESCENDING)],
+            name="ix_grant_company_active",
+        )
+        await self._collection.create_index(
+            [("user_id", ASCENDING), ("created_at", DESCENDING)],
+            name="ix_grant_user_created",
+        )
+        await self._collection.create_index(
+            [("created_at", DESCENDING)],
+            name="ix_grant_created",
+        )
+
+    async def create(self, grant: BillingAccessGrantDocument) -> BillingAccessGrantDocument:
+        await self._collection.insert_one(grant.to_mongo())
+        return grant
+
+    async def get(self, grant_id: UUID) -> BillingAccessGrantDocument | None:
+        doc = await self._collection.find_one({"_id": grant_id})
+        return BillingAccessGrantDocument.model_validate(doc) if doc else None
+
+    async def get_active_for_company(
+        self, company_id: UUID
+    ) -> BillingAccessGrantDocument | None:
+        doc = await self._collection.find_one(
+            {
+                "company_id": company_id,
+                "revoked_at": None,
+                "expires_at": {"$gt": utcnow()},
+            },
+            sort=[("expires_at", DESCENDING)],
+        )
+        return BillingAccessGrantDocument.model_validate(doc) if doc else None
+
+    async def revoke(self, grant_id: UUID) -> BillingAccessGrantDocument | None:
+        now = utcnow()
+        doc = await self._collection.find_one_and_update(
+            {"_id": grant_id, "revoked_at": None},
+            {"$set": {"revoked_at": now, "updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return BillingAccessGrantDocument.model_validate(doc) if doc else None
+
+    async def revoke_active_for_company(self, company_id: UUID) -> None:
+        now = utcnow()
+        await self._collection.update_many(
+            {
+                "company_id": company_id,
+                "revoked_at": None,
+                "expires_at": {"$gt": now},
+            },
+            {"$set": {"revoked_at": now, "updated_at": now}},
+        )
+
+    async def company_ids_with_active_grant(self) -> set[UUID]:
+        cursor = self._collection.find(
+            {"revoked_at": None, "expires_at": {"$gt": utcnow()}},
+            projection={"company_id": 1},
+        )
+        docs = await cursor.to_list(length=None)
+        return {doc["company_id"] for doc in docs}
+
+    async def list_all(
+        self,
+        *,
+        skip: int,
+        limit: int,
+        user_id: UUID | None = None,
+        active_only: bool = False,
+    ) -> list[BillingAccessGrantDocument]:
+        query: dict[str, Any] = {}
+        if user_id is not None:
+            query["user_id"] = user_id
+        if active_only:
+            query["revoked_at"] = None
+            query["expires_at"] = {"$gt": utcnow()}
+        cursor = (
+            self._collection.find(query)
+            .sort("created_at", DESCENDING)
+            .skip(skip)
+            .limit(limit)
+        )
+        docs = await cursor.to_list(length=limit)
+        return [BillingAccessGrantDocument.model_validate(d) for d in docs]
+
+    async def count(
+        self, *, user_id: UUID | None = None, active_only: bool = False
+    ) -> int:
+        query: dict[str, Any] = {}
+        if user_id is not None:
+            query["user_id"] = user_id
+        if active_only:
+            query["revoked_at"] = None
+            query["expires_at"] = {"$gt": utcnow()}
+        return await self._collection.count_documents(query)
+
+
 class BillingRepository:
     """Facade that groups billing collections for DI."""
 
@@ -403,6 +508,7 @@ class BillingRepository:
         self.subscriptions = BillingSubscriptionsRepository(db)
         self.invoices = BillingInvoicesRepository(db)
         self.webhook_events = BillingWebhookEventsRepository(db)
+        self.access_grants = BillingAccessGrantsRepository(db)
 
     async def ensure_indexes(self) -> None:
         await self.plans.ensure_indexes()
@@ -411,9 +517,11 @@ class BillingRepository:
         await self.subscriptions.ensure_indexes()
         await self.invoices.ensure_indexes()
         await self.webhook_events.ensure_indexes()
+        await self.access_grants.ensure_indexes()
 
 
 __all__ = [
+    "BillingAccessGrantsRepository",
     "BillingCouponsRepository",
     "BillingInvoicesRepository",
     "BillingPlansRepository",

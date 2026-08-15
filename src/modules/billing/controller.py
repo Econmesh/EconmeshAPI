@@ -5,6 +5,8 @@ from __future__ import annotations
 from uuid import UUID
 
 from src.modules.billing.schema import (
+    AccessGrantCreate,
+    AccessGrantListParams,
     AdminSubscriptionListParams,
     BillingCouponCreate,
     BillingCouponUpdate,
@@ -93,6 +95,20 @@ class AdminBillingController:
 
     async def list_pending_users(self, pagination: PaginationParams):
         return await self._service.admin_list_pending_users(pagination)
+
+    async def create_access_grant(self, payload: AccessGrantCreate, *, firebase_uid: str):
+        return await self._service.admin_create_access_grant(
+            payload, firebase_uid=firebase_uid
+        )
+
+    async def search_access_grant_targets(self, q: str):
+        return await self._service.admin_search_access_grant_targets(q)
+
+    async def list_access_grants(self, params: AccessGrantListParams):
+        return await self._service.admin_list_access_grants(params)
+
+    async def revoke_access_grant(self, grant_id: UUID):
+        return await self._service.admin_revoke_access_grant(grant_id)
 
 
 class BillingWebhookController:

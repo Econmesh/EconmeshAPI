@@ -6,7 +6,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import Query
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from src.modules.billing.model import (
     BillingType,
@@ -234,6 +234,7 @@ class BillingMeResponse(APIModel):
     is_admin: bool = False
     company_id: UUID | None = None
     subscription: BillingSubscriptionResponse | None = None
+    access_grant_expires_at: datetime | None = None
     trial_enabled: bool = False
     trial_days: int = 0
     allowed_billing_types: list[BillingType] = Field(default_factory=list)
@@ -326,7 +327,97 @@ class AdminSubscriptionListParams(APIModel):
         return (self.page - 1) * self.page_size
 
 
+class AccessGrantCreate(APIModel):
+    user_id: UUID | None = None
+    company_id: UUID | None = None
+    expires_at: datetime
+    reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _clean_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def _require_target(self) -> AccessGrantCreate:
+        if self.user_id is None and self.company_id is None:
+            raise ValueError("Informe o usuário ou a empresa.")
+        return self
+
+
+class AccessGrantResponse(APIModel):
+    id: UUID
+    company_id: UUID
+    company_name: str | None = None
+    user_id: UUID
+    user_name: str | None = None
+    user_email: str | None = None
+    expires_at: datetime
+    reason: str | None = None
+    granted_by_user_id: UUID
+    granted_by_name: str | None = None
+    revoked_at: datetime | None = None
+    is_active: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
+class AccessGrantListResponse(APIModel):
+    items: list[AccessGrantResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class AccessGrantTarget(APIModel):
+    user_id: UUID
+    user_name: str | None = None
+    user_email: str | None = None
+    user_phone: str | None = None
+    company_id: UUID
+    company_name: str | None = None
+
+
+class AccessGrantTargetListResponse(APIModel):
+    items: list[AccessGrantTarget]
+
+
+class AccessGrantListParams(APIModel):
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=20, ge=1, le=100)
+    user_id: UUID | None = None
+    active_only: bool = False
+
+    @classmethod
+    def as_query(
+        cls,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+        user_id: UUID | None = Query(None),
+        active_only: bool = Query(False),
+    ) -> AccessGrantListParams:
+        return cls(
+            page=page,
+            page_size=page_size,
+            user_id=user_id,
+            active_only=active_only,
+        )
+
+    @property
+    def skip(self) -> int:
+        return (self.page - 1) * self.page_size
+
+
 __all__ = [
+    "AccessGrantCreate",
+    "AccessGrantListParams",
+    "AccessGrantListResponse",
+    "AccessGrantResponse",
+    "AccessGrantTarget",
+    "AccessGrantTargetListResponse",
     "AdminPendingUserItem",
     "AdminPendingUserListResponse",
     "AdminSubscriptionListItem",

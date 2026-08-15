@@ -7,7 +7,7 @@ from uuid import UUID
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
-
+from src.modules.billing.deps import require_active_subscription
 from src.modules.opportunities.controller import OpportunitiesController
 from src.modules.opportunities.model import (
     OfferDemand,
@@ -22,6 +22,7 @@ from src.modules.opportunities.schema import (
     OpportunityImageResponse,
     OpportunityListResponse,
     OpportunityMatch,
+    OpportunityPreviewResponse,
     OpportunityResponse,
 )
 from src.shared.dependencies.auth import CurrentUser, get_current_user
@@ -111,8 +112,10 @@ async def test_list_opportunities_returns_envelope(
         assert body["total"] == 1
         assert body["has_more"] is False
         assert body["has_demands"] is False
+        assert body["is_preview"] is False
         assert len(body["items"]) == 1
         assert body["items"][0]["title"] == "Venda de PET Triturado"
+        assert body["items"][0]["locked"] is False
     finally:
         app.dependency_overrides.clear()
 
@@ -167,9 +170,67 @@ async def test_list_opportunities_returns_matching_when_has_demands(
         assert response.status_code == 200
         body = response.json()
         assert body["has_demands"] is True
+        assert body["is_preview"] is False
         assert body["items"][0]["matching"]["score"] == 92
         assert body["items"][0]["matching"]["potential"] == "HIGH"
         assert body["items"][0]["matching"]["details"]["category"] == 100
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_list_opportunities_returns_preview_envelope(
+    app: FastAPI, client: AsyncClient
+) -> None:
+    fake_user = CurrentUser(uid="firebase-uid-123", email="alice@example.com")
+    preview = OpportunityPreviewResponse(
+        id=new_uuid(),
+        title="Venda de PET Triturado",
+        images=[
+            OpportunityImageResponse(
+                storage_key="econmesh/images/test.jpg",
+                url="https://example.com/test.jpg",
+                is_primary=True,
+                sort_order=0,
+            )
+        ],
+        opportunity_type=OpportunityType.COMERCIALIZACAO,
+        offer_demand=OfferDemand.GERADOR,
+        category="Plástico",
+    )
+
+    class _StubController(OpportunitiesController):
+        def __init__(self) -> None:
+            pass
+
+        async def list(self, params, current_user: CurrentUser) -> OpportunityListResponse:
+            return OpportunityListResponse(
+                items=[preview],
+                total=1,
+                page=1,
+                page_size=12,
+                has_more=False,
+                has_demands=False,
+                is_preview=True,
+            )
+
+    app.dependency_overrides[get_current_user] = lambda: fake_user
+    app.dependency_overrides[_build_controller] = lambda: _StubController()
+    try:
+        response = await client.get(
+            "/api/v1/opportunities",
+            headers={"Authorization": "Bearer fake-token"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["is_preview"] is True
+        assert body["has_demands"] is False
+        item = body["items"][0]
+        assert item["locked"] is True
+        assert item["title"] == "Venda de PET Triturado"
+        assert item["category"] == "Plástico"
+        assert "price" not in item
+        assert "company_name" not in item
+        assert "description" not in item
     finally:
         app.dependency_overrides.clear()
 
@@ -193,6 +254,7 @@ async def test_create_opportunity_returns_201(
 
     app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[_build_controller] = lambda: _StubController()
+    app.dependency_overrides[require_active_subscription] = lambda: fake_user
     try:
         response = await client.post(
             "/api/v1/opportunities",
@@ -240,6 +302,7 @@ async def test_delete_opportunity_returns_204(
 
     app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[_build_controller] = lambda: _StubController()
+    app.dependency_overrides[require_active_subscription] = lambda: fake_user
     try:
         response = await client.delete(
             f"/api/v1/opportunities/{opportunity_id}",
@@ -273,6 +336,7 @@ async def test_presign_image_returns_upload_url(
 
     app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[_build_controller] = lambda: _StubController()
+    app.dependency_overrides[require_active_subscription] = lambda: fake_user
     try:
         response = await client.post(
             "/api/v1/opportunities/images/presign",
@@ -306,6 +370,7 @@ async def test_upload_image_returns_storage_key(
 
     app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[_build_controller] = lambda: _StubController()
+    app.dependency_overrides[require_active_subscription] = lambda: fake_user
     try:
         response = await client.post(
             "/api/v1/opportunities/images/upload",
