@@ -82,7 +82,7 @@ class AuthService:
         payload: RegisterRequest,
         *,
         operating_license: UploadFile,
-        mtr: UploadFile,
+        mtr: UploadFile | None = None,
     ) -> RegisterResponse:
         """Self-service signup for a standard (non-privileged) user."""
         if payload.company is None:
@@ -325,13 +325,13 @@ class AuthService:
         address = CompanyAddress.model_validate(company.address.model_dump())
         license_file = None
         mtr_file = None
-        if operating_license is not None:
+        if operating_license is not None and (operating_license.filename or "").strip():
             license_file = await upload_compliance_file(
                 operating_license,
                 owner_user_id=user.id,
                 firebase_client=self._firebase,
             )
-        if mtr is not None:
+        if mtr is not None and (mtr.filename or "").strip():
             mtr_file = await upload_compliance_file(
                 mtr,
                 owner_user_id=user.id,

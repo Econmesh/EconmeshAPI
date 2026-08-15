@@ -28,7 +28,7 @@ class AuthController:
         payload: RegisterRequest,
         *,
         operating_license: UploadFile,
-        mtr: UploadFile,
+        mtr: UploadFile | None = None,
     ) -> RegisterResponse:
         return await self._service.register(
             payload, operating_license=operating_license, mtr=mtr
