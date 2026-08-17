@@ -46,6 +46,7 @@ from src.modules.companies.service import CompaniesService
 from src.modules.conversations.repository import ConversationMessagesRepository
 from src.modules.opportunities.model import OpportunityType
 from src.modules.opportunities.repository import OpportunitiesRepository
+from src.modules.platform_settings.repository import PlatformSettingsRepository
 from src.modules.opportunities.schema import (
     OpportunityListParams,
     OpportunityListResponse,
@@ -124,6 +125,7 @@ from src.modules.conversations.schema import (
 from src.modules.users.repository import UsersRepository
 from src.modules.users.schema import UserProfileResponse
 from src.modules.users.service import UsersService
+from src.modules.visual_signatures.deps import build_visual_signatures_service
 from src.infrastructure.email import email_sender
 from src.infrastructure.realtime.conversation_pubsub import (
     subscribe_conversation_admin,
@@ -219,6 +221,8 @@ def _build_agreements_controller(
         notifications=notifications,
         messages_repository=ConversationMessagesRepository(db),
         opportunities_repository=OpportunitiesRepository(db),
+        platform_settings_repository=PlatformSettingsRepository(db),
+        visual_signatures_service=build_visual_signatures_service(db),
     )
     return AgreementsController(service)
 

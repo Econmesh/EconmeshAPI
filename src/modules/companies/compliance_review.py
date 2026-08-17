@@ -47,10 +47,12 @@ logger = get_logger(__name__)
 _KIND_FIELDS = {
     "operating_license": "operating_license",
     "mtr": "mtr_document",
+    "signature_authorization": "signature_authorization",
 }
 _KIND_LABELS = {
     "operating_license": "Licença de operação",
     "mtr": "MTR",
+    "signature_authorization": "Autorização de assinatura",
 }
 
 
@@ -96,7 +98,11 @@ class ComplianceReviewService:
     async def enqueue(
         self, company: CompanyDocument, *, message: str | None = None
     ) -> SupportTicketDocument | None:
-        if not company.operating_license and not company.mtr_document:
+        if (
+            not company.operating_license
+            and not company.mtr_document
+            and not company.signature_authorization
+        ):
             return None
         now = utcnow()
         body = message or (
@@ -223,10 +229,17 @@ class ComplianceReviewService:
         return updated
 
     async def _maybe_close_ticket(self, company: CompanyDocument) -> None:
-        docs = (company.operating_license, company.mtr_document)
+        required_docs = (company.operating_license, company.mtr_document)
         still_pending = any(
-            doc is None or doc.status == ComplianceDocumentStatus.PENDING for doc in docs
+            doc is None or doc.status == ComplianceDocumentStatus.PENDING
+            for doc in required_docs
         )
+        auth_doc = company.signature_authorization
+        if (
+            auth_doc is not None
+            and auth_doc.status == ComplianceDocumentStatus.PENDING
+        ):
+            still_pending = True
         if still_pending:
             return
         ticket = await self._tickets.find_open_document_review(company.id)

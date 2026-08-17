@@ -72,6 +72,10 @@ class CompanyDocument(DomainDocument):
     mtr_document: CompanyComplianceFile | None = Field(
         default=None, description="Comprovante de cadastro no MTR Nacional (SINIR)."
     )
+    signature_authorization: CompanyComplianceFile | None = Field(
+        default=None,
+        description="Procuração / autorização de assinatura em nome da empresa.",
+    )
     is_active: bool = True
 
 

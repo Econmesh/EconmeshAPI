@@ -22,6 +22,10 @@ os.environ.setdefault("FIREBASE_PROJECT_ID", "econmesh-test")
 os.environ.setdefault("MONGO_URI", "mongodb://localhost:27017")
 os.environ.setdefault("MONGO_DB", "econmesh_test")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
+os.environ.setdefault(
+    "DATA_ENCRYPTION_KEY",
+    "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+)
 
 from asgi_lifespan import LifespanManager  # noqa: E402
 from fastapi import FastAPI  # noqa: E402

@@ -49,6 +49,8 @@ def stamp_signed_pdf(
     fields: list[AgreementField],
     signed_at: datetime,
     document_hash: str,
+    signature_png: bytes | None = None,
+    initials_png: bytes | None = None,
 ) -> bytes:
     """Draw field values and an authentication block for one participant."""
     doc = fitz.open(stream=original_pdf, filetype="pdf")
@@ -64,10 +66,15 @@ def stamp_signed_pdf(
             y1 = y0 + field.height * rect.height
             box = fitz.Rect(x0, y0, x1, y1)
 
+            if field.field_type == FieldType.SIGNATURE and signature_png:
+                page.insert_image(box, stream=signature_png, keep_proportion=True)
+                continue
+            if field.field_type == FieldType.INITIALS and initials_png:
+                page.insert_image(box, stream=initials_png, keep_proportion=True)
+                continue
+
             label = field.value or ""
-            if field.field_type == FieldType.SIGNATURE:
-                label = participant.name
-            elif field.field_type == FieldType.NAME:
+            if field.field_type == FieldType.SIGNATURE or field.field_type == FieldType.NAME:
                 label = participant.name
             elif field.field_type == FieldType.CPF:
                 label = participant.cpf or ""
@@ -94,7 +101,9 @@ def stamp_signed_pdf(
 
         # Auth stamp on last page
         last = doc[-1]
-        stamp_rect = fitz.Rect(36, last.rect.height - 140, last.rect.width - 36, last.rect.height - 36)
+        stamp_rect = fitz.Rect(
+            36, last.rect.height - 140, last.rect.width - 36, last.rect.height - 36
+        )
         stamp_text = (
             f"Assinatura Digital — {_role_label(participant.role)}\n"
             f"Nome: {participant.name}\n"

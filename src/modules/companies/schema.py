@@ -95,6 +95,7 @@ class CompanyResponse(APIModel):
     sector: str | None = None
     operating_license: CompanyComplianceFileResponse | None = None
     mtr_document: CompanyComplianceFileResponse | None = None
+    signature_authorization: CompanyComplianceFileResponse | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime

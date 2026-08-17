@@ -83,6 +83,11 @@ class CompaniesService:
             mtr_document = CompanyComplianceFileResponse.model_validate(
                 doc.mtr_document.model_dump()
             )
+        signature_authorization = None
+        if doc.signature_authorization is not None:
+            signature_authorization = CompanyComplianceFileResponse.model_validate(
+                doc.signature_authorization.model_dump()
+            )
         return CompanyResponse(
             id=doc.id,
             owner_user_id=doc.owner_user_id,
@@ -101,6 +106,7 @@ class CompaniesService:
             sector=doc.sector,
             operating_license=operating_license,
             mtr_document=mtr_document,
+            signature_authorization=signature_authorization,
             is_active=doc.is_active,
             created_at=doc.created_at,
             updated_at=doc.updated_at,

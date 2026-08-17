@@ -54,10 +54,8 @@ from src.modules.agreements.schema import (
     AgreementUpdate,
     CompanySearchItem,
     CompanySearchResponse,
-    FieldInput,
     FieldResponse,
     FieldsUpdate,
-    ParticipantInput,
     ParticipantResponse,
     ParticipantsUpdate,
     ProgressResponse,
@@ -70,7 +68,10 @@ from src.modules.auth.repository import AuthRepository
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.conversations.repository import ConversationMessagesRepository
 from src.modules.opportunities.repository import OpportunitiesRepository
+from src.modules.platform_settings.repository import PlatformSettingsRepository
 from src.modules.users.repository import UsersRepository
+from src.modules.visual_signatures.model import VisualSignatureKind
+from src.modules.visual_signatures.service import VisualSignaturesService
 from src.shared.constants.roles import Role
 from src.shared.utils.ids import new_uuid
 from src.shared.utils.storage_keys import build_storage_key
@@ -90,6 +91,8 @@ class AgreementsService:
         notifications: AgreementNotificationService | None = None,
         messages_repository: ConversationMessagesRepository | None = None,
         opportunities_repository: OpportunitiesRepository | None = None,
+        platform_settings_repository: PlatformSettingsRepository | None = None,
+        visual_signatures_service: VisualSignaturesService | None = None,
     ) -> None:
         self._repo = repository
         self._events = events_repository
@@ -99,6 +102,8 @@ class AgreementsService:
         self._notifications = notifications
         self._messages_repo = messages_repository
         self._opportunities_repo = opportunities_repository
+        self._platform_settings = platform_settings_repository
+        self._visual_signatures = visual_signatures_service
 
     # ------------------------------------------------------------------ helpers
     async def _resolve_user(self, firebase_uid: str):
@@ -106,6 +111,47 @@ class AgreementsService:
         if user is None:
             raise NotFoundError("User not found.", code="user_not_found")
         return user
+
+    async def _load_visual_artifacts(
+        self,
+        *,
+        user_id: UUID,
+        fields: list[AgreementField],
+        agreement_id: UUID,
+        ip: str | None,
+        user_agent: str | None,
+    ) -> tuple[
+        tuple[object, bytes] | None,
+        tuple[object, bytes] | None,
+    ]:
+        needs_signature = any(f.field_type == FieldType.SIGNATURE for f in fields)
+        needs_initials = any(f.field_type == FieldType.INITIALS for f in fields)
+        if not needs_signature and not needs_initials:
+            return None, None
+        if self._visual_signatures is None:
+            raise ValidationAppError(
+                "Crie sua assinatura visual no perfil antes de assinar o acordo.",
+                code="visual_signature_required",
+            )
+        signature = None
+        initials = None
+        if needs_signature:
+            signature = await self._visual_signatures.load_png_for_user(
+                user_id,
+                VisualSignatureKind.SIGNATURE,
+                agreement_id=agreement_id,
+                ip=ip,
+                user_agent=user_agent,
+            )
+        if needs_initials:
+            initials = await self._visual_signatures.load_png_for_user(
+                user_id,
+                VisualSignatureKind.INITIALS,
+                agreement_id=agreement_id,
+                ip=ip,
+                user_agent=user_agent,
+            )
+        return signature, initials
 
     @staticmethod
     def _verification_code() -> str:
@@ -243,6 +289,12 @@ class AgreementsService:
             )
         )
 
+    async def _require_signature_authorization(self) -> bool:
+        if self._platform_settings is None:
+            return False
+        settings = await self._platform_settings.get_or_create()
+        return bool(settings.require_signature_authorization)
+
     async def _ensure_creator_eligible(
         self, user, company_id: UUID
     ) -> tuple[str, list[str]]:
@@ -253,7 +305,13 @@ class AgreementsService:
             raise NotFoundError("Empresa não encontrada.")
         if company.owner_user_id != user.id:
             raise ForbiddenError("Você não tem acesso a esta empresa.")
-        missing.extend(company_missing_fields(company))
+        require_auth = await self._require_signature_authorization()
+        missing.extend(
+            company_missing_fields(
+                company,
+                require_signature_authorization=require_auth,
+            )
+        )
         raise_if_incomplete(missing)
         company_name = company.trade_name or company.legal_name
         return company_name, missing
@@ -845,7 +903,13 @@ class AgreementsService:
         if participant.kind == ParticipantKind.COMPANY and participant.company_id:
             company = await self._companies_repo.get(participant.company_id)
             if company:
-                raise_if_incomplete(company_missing_fields(company))
+                require_auth = await self._require_signature_authorization()
+                raise_if_incomplete(
+                    company_missing_fields(
+                        company,
+                        require_signature_authorization=require_auth,
+                    )
+                )
 
         now = utcnow()
         # Apply field values
@@ -868,6 +932,34 @@ class AgreementsService:
             elif field.field_type == FieldType.DATE:
                 field.value = now.strftime("%d/%m/%Y")
 
+        participant_fields = [f for f in doc.fields if f.participant_id == participant.id]
+        signature_png, initials_png = await self._load_visual_artifacts(
+            user_id=user.id,
+            fields=participant_fields,
+            agreement_id=doc.id,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        signature_meta: dict[str, str] = {}
+        if signature_png is not None:
+            signature_doc, signature_bytes = signature_png
+            signature_meta["signature_id"] = str(signature_doc.id)
+            signature_meta["signature_sha256"] = signature_doc.sha256
+            for field in participant_fields:
+                if field.field_type == FieldType.SIGNATURE:
+                    field.value = str(signature_doc.id)
+        else:
+            signature_bytes = None
+        if initials_png is not None:
+            initials_doc, initials_bytes = initials_png
+            signature_meta["initials_id"] = str(initials_doc.id)
+            signature_meta["initials_sha256"] = initials_doc.sha256
+            for field in participant_fields:
+                if field.field_type == FieldType.INITIALS:
+                    field.value = str(initials_doc.id)
+        else:
+            initials_bytes = None
+
         # Stamp PDF
         if doc.original_file is None:
             raise ValidationAppError("Documento original ausente.")
@@ -876,7 +968,6 @@ class AgreementsService:
         )
         pdf_bytes = await self._download_bytes(source_url)
         current_hash = sha256_bytes(pdf_bytes)
-        participant_fields = [f for f in doc.fields if f.participant_id == participant.id]
         stamped = stamp_signed_pdf(
             pdf_bytes,
             agreement=doc,
@@ -884,6 +975,8 @@ class AgreementsService:
             fields=participant_fields,
             signed_at=now,
             document_hash=current_hash,
+            signature_png=signature_bytes,
+            initials_png=initials_bytes,
         )
         signed_file = await self._upload_pdf(
             stamped,
@@ -898,7 +991,9 @@ class AgreementsService:
         participant.user_agent = user_agent
         participant.user_id = user.id
         participant.signature_hash = sha256_bytes(
-            f"{doc.id}:{participant.id}:{current_hash}:{now.isoformat()}".encode()
+            f"{doc.id}:{participant.id}:{current_hash}:{now.isoformat()}:"
+            f"{signature_meta.get('signature_sha256', '')}:"
+            f"{signature_meta.get('initials_sha256', '')}".encode()
         )
         if profile and profile.cpf and not participant.cpf:
             participant.cpf = profile.cpf
@@ -921,7 +1016,7 @@ class AgreementsService:
             actor_company_name=participant.company_name,
             ip=ip,
             user_agent=user_agent,
-            metadata={"participant_id": str(participant.id)},
+            metadata={"participant_id": str(participant.id), **signature_meta},
         )
 
         if self._notifications:
@@ -1286,7 +1381,13 @@ class AgreementsService:
                 raise NotFoundError("Empresa não encontrada.")
             if company.owner_user_id != user.id:
                 raise ForbiddenError("Você não tem acesso a esta empresa.")
-            missing.extend(company_missing_fields(company))
+            require_auth = await self._require_signature_authorization()
+            missing.extend(
+                company_missing_fields(
+                    company,
+                    require_signature_authorization=require_auth,
+                )
+            )
         return {"eligible": len(missing) == 0, "missing": missing}
 
     async def expire_due(self) -> int:

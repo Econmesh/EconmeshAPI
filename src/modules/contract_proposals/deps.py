@@ -23,6 +23,7 @@ from src.modules.conversations.repository import (
 from src.modules.notifications.repository import UserNotificationsRepository
 from src.modules.opportunities.repository import OpportunitiesRepository
 from src.modules.users.repository import UsersRepository
+from src.modules.visual_signatures.deps import build_visual_signatures_service
 
 if TYPE_CHECKING:
     from pymongo.asynchronous.database import AsyncDatabase
@@ -47,6 +48,7 @@ def build_contract_proposals_controller(
         ),
         messages_repository=ConversationMessagesRepository(db),
         opportunities_repository=OpportunitiesRepository(db),
+        visual_signatures_service=build_visual_signatures_service(db),
     )
     service = ContractProposalsService(
         repository=ContractProposalsRepository(db),

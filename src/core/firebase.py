@@ -395,6 +395,25 @@ class FirebaseAdmin:
 
         return self._public_storage_url(storage_key, token=download_token)
 
+    async def download_storage_bytes(self, storage_key: str) -> bytes:
+        """Download object bytes from Storage by key (no public URL required)."""
+        bucket_name = self._storage_bucket_name()
+        storage_app = self._require_storage_app()
+
+        def _download() -> bytes:
+            bucket = storage.bucket(bucket_name, app=storage_app)
+            blob = bucket.blob(storage_key)
+            return blob.download_as_bytes()
+
+        try:
+            return await asyncio.to_thread(_download)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("firebase_storage_download_failed")
+            raise ExternalServiceError(
+                "Unable to download file.",
+                code="storage_download_failed",
+            ) from exc
+
 
 firebase = FirebaseAdmin()
 """Process-wide singleton."""

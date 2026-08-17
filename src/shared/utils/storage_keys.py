@@ -34,6 +34,10 @@ def company_doc_storage_key(owner_user_id: UUID | str, extension: str) -> str:
     return build_storage_key("company-docs", owner_user_id, extension)
 
 
+def signature_storage_key(owner_user_id: UUID | str, extension: str) -> str:
+    return build_storage_key("signatures", owner_user_id, extension)
+
+
 __all__ = [
     "STORAGE_ROOT",
     "avatar_storage_key",
@@ -41,4 +45,5 @@ __all__ = [
     "company_doc_storage_key",
     "image_storage_key",
     "logo_storage_key",
+    "signature_storage_key",
 ]

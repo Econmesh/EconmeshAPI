@@ -74,3 +74,48 @@ def test_company_missing_fields_requires_approved_compliance_documents() -> None
         )
     )
     assert "company.operating_license" in missing
+
+
+def test_company_missing_fields_ignores_signature_authorization_when_optional() -> None:
+    missing = company_missing_fields(_doc(signature_authorization=None))
+    assert "company.signature_authorization" not in missing
+
+
+def test_company_missing_fields_requires_signature_authorization_when_enabled() -> None:
+    missing = company_missing_fields(
+        _doc(signature_authorization=None),
+        require_signature_authorization=True,
+    )
+    assert "company.signature_authorization" in missing
+
+
+def test_company_missing_fields_requires_approved_signature_authorization() -> None:
+    missing = company_missing_fields(
+        _doc(
+            signature_authorization=CompanyComplianceFile(
+                storage_key="econmesh/company-docs/x/proc.pdf",
+                public_url="https://example.com/proc.pdf",
+                filename="proc.pdf",
+                content_type="application/pdf",
+                status=ComplianceDocumentStatus.PENDING,
+            )
+        ),
+        require_signature_authorization=True,
+    )
+    assert "company.signature_authorization" in missing
+
+
+def test_company_missing_fields_complete_with_approved_signature_authorization() -> None:
+    missing = company_missing_fields(
+        _doc(
+            signature_authorization=CompanyComplianceFile(
+                storage_key="econmesh/company-docs/x/proc.pdf",
+                public_url="https://example.com/proc.pdf",
+                filename="proc.pdf",
+                content_type="application/pdf",
+                status=ComplianceDocumentStatus.APPROVED,
+            )
+        ),
+        require_signature_authorization=True,
+    )
+    assert missing == []

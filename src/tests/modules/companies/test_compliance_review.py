@@ -242,3 +242,108 @@ async def test_approve_rejects_already_reviewed_document() -> None:
     with pytest.raises(ValidationAppError) as exc:
         await service.approve(company.id, "operating_license", reviewer_id=new_uuid())
     assert exc.value.code == "document_already_reviewed"
+
+
+async def test_enqueue_creates_ticket_when_only_signature_authorization() -> None:
+    service, deps = _build_service()
+    company = _company(
+        operating_license=None,
+        mtr_document=None,
+        signature_authorization=_file(filename="proc.pdf"),
+    )
+    deps["tickets"].find_open_document_review = AsyncMock(return_value=None)
+    deps["tickets"].find_latest_document_review = AsyncMock(return_value=None)
+    deps["tickets"].next_document_review_ticket_number = AsyncMock(return_value=1)
+    deps["tickets"].create = AsyncMock(side_effect=lambda doc: doc)
+
+    ticket = await service.enqueue(company)
+
+    assert ticket is not None
+    assert ticket.source == SupportTicketSource.DOCUMENT_REVIEW
+    deps["support_notifications"].notify_admins_document_review.assert_awaited_once()
+
+
+async def test_approve_keeps_ticket_open_when_signature_authorization_pending() -> None:
+    service, deps = _build_service()
+    company = _company(
+        operating_license=_file(status=ComplianceDocumentStatus.PENDING),
+        mtr_document=_file(status=ComplianceDocumentStatus.APPROVED, filename="mtr.pdf"),
+        signature_authorization=_file(
+            status=ComplianceDocumentStatus.PENDING, filename="proc.pdf"
+        ),
+    )
+    deps["companies"].get = AsyncMock(return_value=company)
+    updated = company.model_copy(
+        update={"operating_license": _file(status=ComplianceDocumentStatus.APPROVED)}
+    )
+    deps["companies"].update = AsyncMock(return_value=updated)
+    deps["auth"].get_by_id = AsyncMock(return_value=None)
+    ticket = SupportTicketDocument(
+        source=SupportTicketSource.DOCUMENT_REVIEW,
+        user_id=company.owner_user_id,
+        company_id=company.id,
+        ticket_number=1,
+        subject="Documentos",
+        status=SupportTicketStatus.OPEN,
+    )
+    deps["tickets"].find_open_document_review = AsyncMock(return_value=ticket)
+
+    await service.approve(company.id, "operating_license", reviewer_id=new_uuid())
+
+    deps["tickets"].update.assert_not_awaited()
+
+
+async def test_approve_closes_ticket_when_signature_authorization_absent() -> None:
+    service, deps = _build_service()
+    company = _company(
+        operating_license=_file(status=ComplianceDocumentStatus.PENDING),
+        mtr_document=_file(status=ComplianceDocumentStatus.APPROVED, filename="mtr.pdf"),
+        signature_authorization=None,
+    )
+    deps["companies"].get = AsyncMock(return_value=company)
+    updated = company.model_copy(
+        update={"operating_license": _file(status=ComplianceDocumentStatus.APPROVED)}
+    )
+    deps["companies"].update = AsyncMock(return_value=updated)
+    deps["auth"].get_by_id = AsyncMock(return_value=None)
+    ticket = SupportTicketDocument(
+        source=SupportTicketSource.DOCUMENT_REVIEW,
+        user_id=company.owner_user_id,
+        company_id=company.id,
+        ticket_number=1,
+        subject="Documentos",
+        status=SupportTicketStatus.OPEN,
+    )
+    deps["tickets"].find_open_document_review = AsyncMock(return_value=ticket)
+
+    await service.approve(company.id, "operating_license", reviewer_id=new_uuid())
+
+    deps["tickets"].update.assert_awaited()
+    close_fields = deps["tickets"].update.await_args.args[1]
+    assert close_fields["status"] == SupportTicketStatus.CLOSED.value
+
+
+async def test_approve_signature_authorization_updates_document() -> None:
+    service, deps = _build_service()
+    company = _company(
+        signature_authorization=_file(status=ComplianceDocumentStatus.PENDING, filename="proc.pdf")
+    )
+    deps["companies"].get = AsyncMock(return_value=company)
+    updated = company.model_copy(
+        update={
+            "signature_authorization": _file(
+                status=ComplianceDocumentStatus.APPROVED, filename="proc.pdf"
+            )
+        }
+    )
+    deps["companies"].update = AsyncMock(return_value=updated)
+    deps["auth"].get_by_id = AsyncMock(return_value=None)
+    deps["tickets"].find_open_document_review = AsyncMock(return_value=None)
+
+    result = await service.approve(
+        company.id, "signature_authorization", reviewer_id=new_uuid()
+    )
+
+    patch = deps["companies"].update.await_args.args[1]
+    assert patch["signature_authorization"]["status"] == "approved"
+    assert result.signature_authorization is not None
