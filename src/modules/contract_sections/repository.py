@@ -150,5 +150,16 @@ class ContractSectionsRepository:
         )
         return result.modified_count > 0
 
+    async def deactivate_foro_templates(self) -> int:
+        """Soft-deactivate legacy admin templates that duplicated the system Foro."""
+        result = await self._collection.update_many(
+            {
+                "is_active": True,
+                "title": {"$regex": r"^(do\s+)?foro$", "$options": "i"},
+            },
+            {"$set": {"is_active": False, "updated_at": utcnow()}},
+        )
+        return int(result.modified_count)
+
 
 __all__ = ["ContractSectionsRepository"]

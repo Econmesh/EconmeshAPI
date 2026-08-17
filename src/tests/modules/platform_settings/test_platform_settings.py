@@ -7,9 +7,12 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
-
 from src.modules.platform_settings.admin_routes import _build_service as _build_admin_service
-from src.modules.platform_settings.model import PLATFORM_SETTINGS_ID, PlatformSettingsDocument
+from src.modules.platform_settings.model import (
+    PLATFORM_SETTINGS_ID,
+    ForoFillMode,
+    PlatformSettingsDocument,
+)
 from src.modules.platform_settings.routes import _build_service
 from src.modules.platform_settings.schema import PlatformSettingsResponse
 from src.modules.platform_settings.service import PlatformSettingsService
@@ -35,6 +38,9 @@ def _response(
     return PlatformSettingsResponse(
         id=PLATFORM_SETTINGS_ID,
         require_signature_authorization=require_signature_authorization,
+        foro_fill_mode="company",
+        foro_city=None,
+        foro_state=None,
         updated_at=now,
     )
 
@@ -67,6 +73,7 @@ async def test_get_platform_settings_returns_defaults(
         assert response.status_code == 200
         body = response.json()
         assert body["require_signature_authorization"] is False
+        assert body["foro_fill_mode"] == "company"
     finally:
         app.dependency_overrides.clear()
 
@@ -134,6 +141,7 @@ async def test_service_get_returns_default_when_created() -> None:
     service = PlatformSettingsService(repo)
     result = await service.get()
     assert result.require_signature_authorization is False
+    assert result.foro_fill_mode in (ForoFillMode.COMPANY, "company")
     assert result.id == PLATFORM_SETTINGS_ID
 
 

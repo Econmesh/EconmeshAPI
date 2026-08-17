@@ -10,6 +10,7 @@ from pydantic import Field
 
 from src.modules.contract_proposals.model import ContractProposalStatus
 from src.modules.contract_sections.model import ContractType
+from src.modules.platform_settings.model import ForoFillMode
 from src.shared.schemas.base import APIModel
 
 
@@ -59,6 +60,8 @@ class ContractProposalUpdate(APIModel):
     contracted: PartySnapshotInput | None = None
     opportunity: OpportunitySnapshotInput | None = None
     sections: list[ProposalSectionInput] | None = None
+    foro_city: str | None = Field(default=None, max_length=120)
+    foro_state: str | None = Field(default=None, max_length=2)
 
 
 class ProposalPdfFileResponse(APIModel):
@@ -122,6 +125,9 @@ class ContractProposalResponse(APIModel):
     contracted: PartySnapshotResponse
     opportunity: OpportunitySnapshotResponse
     sections: list[ProposalSectionResponse]
+    foro_city: str | None = None
+    foro_state: str | None = None
+    foro_fill_mode: ForoFillMode = ForoFillMode.COMPANY
     pdf_file: ProposalPdfFileResponse | None
     agreement_id: UUID | None
     change_request_message: str | None

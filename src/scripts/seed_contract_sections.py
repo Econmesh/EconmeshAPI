@@ -45,13 +45,6 @@ _DEFAULT_SECTIONS: list[tuple[str, str, int]] = [
         "equivalente a 10% (dez por cento) do valor do contrato.</p>",
         40,
     ),
-    (
-        "Foro",
-        "<p>Fica eleito o foro da comarca da sede da CONTRATADA para dirimir quaisquer "
-        "dúvidas oriundas deste contrato, com renúncia a qualquer outro, por mais "
-        "privilegiado que seja.</p>",
-        50,
-    ),
 ]
 
 
@@ -61,6 +54,10 @@ async def _main() -> None:
     try:
         repo = ContractSectionsRepository(mongo.db)
         await repo.ensure_indexes()
+        deactivated = await repo.deactivate_foro_templates()
+        if deactivated:
+            logger.info("legacy_foro_deactivated", extra={"count": deactivated})
+            print(f"Deactivated {deactivated} legacy Foro template(s).")
         existing = await repo.count_sections(active_only=False)
         if existing > 0:
             logger.info("seed_skipped", extra={"existing": existing})

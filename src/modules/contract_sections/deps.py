@@ -11,6 +11,7 @@ from src.modules.contract_sections.controller import (
 )
 from src.modules.contract_sections.repository import ContractSectionsRepository
 from src.modules.contract_sections.service import ContractSectionsService
+from src.modules.platform_settings.repository import PlatformSettingsRepository
 
 if TYPE_CHECKING:
     from pymongo.asynchronous.database import AsyncDatabase
@@ -20,6 +21,7 @@ def build_contract_sections_service(db: AsyncDatabase) -> ContractSectionsServic
     return ContractSectionsService(
         ContractSectionsRepository(db),
         proposals_repo=ContractProposalsRepository(db),
+        platform_settings_repo=PlatformSettingsRepository(db),
     )
 
 

@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from src.modules.contract_proposals.core_sections import (
     CORE_SECTION_COUNT,
+    FORO_SECTION_DEFINITION,
     core_title_sort_order,
+    is_foro_title,
     normalize_core_title,
+    normalize_foro_title,
 )
 from src.modules.contract_proposals.model import (
     ContractProposalDocument,
     ContractProposalStatus,
     ProposalSection,
 )
+from src.modules.contract_proposals.pdf_service import build_foro_html
 from src.modules.contract_sections.matching import (
     opportunity_type_from_contract_type,
     template_applies_to_opportunity_type,
@@ -97,14 +101,26 @@ def reorder_proposal_sections(
     doc: ContractProposalDocument,
     templates: list[ContractSectionTemplateDocument],
 ) -> bool:
-    """Enforce core → admin(sort_order) → custom ordering on a negotiating minuta."""
+    """Enforce core → admin(sort_order) → custom → foro ordering on a negotiating minuta."""
     if doc.status not in NEGOTIATING_STATUSES:
         return False
 
     core: list[ProposalSection] = []
+    foro: list[ProposalSection] = []
     admin: list[ProposalSection] = []
     custom: list[ProposalSection] = []
     for section in doc.sections:
+        foro_title = normalize_foro_title(section.title)
+        if foro_title is not None or (section.is_core and is_foro_title(section.title)):
+            updates: dict = {
+                "is_core": True,
+                "is_editable": False,
+                "is_admin_managed": False,
+                "template_id": None,
+                "title": foro_title or FORO_SECTION_DEFINITION["title"],
+            }
+            foro.append(section.model_copy(update=updates))
+            continue
         canonical = normalize_core_title(section.title)
         if section.is_core or canonical is not None:
             updates: dict = {"is_core": True}
@@ -132,10 +148,12 @@ def reorder_proposal_sections(
             admin_ordered.append(section)
     admin_ordered.extend(sorted(admin_by_id.values(), key=lambda s: s.sort_order))
     custom_ordered = sorted(custom, key=lambda s: s.sort_order)
+    foro_section = foro[:1]
 
     ordered = core[:CORE_SECTION_COUNT] + admin_ordered + custom_ordered
     if len(core) > CORE_SECTION_COUNT:
         ordered = ordered + core[CORE_SECTION_COUNT:]
+    ordered = ordered + foro_section
 
     new_sections: list[ProposalSection] = []
     for index, section in enumerate(ordered):
@@ -165,6 +183,32 @@ def reorder_proposal_sections(
     return changed
 
 
+def ensure_foro_section(doc: ContractProposalDocument) -> bool:
+    """Guarantee the closing Foro section exists on a negotiating minuta."""
+    if doc.status not in NEGOTIATING_STATUSES:
+        return False
+    if any(is_foro_title(section.title) for section in doc.sections):
+        return False
+    html = build_foro_html(
+        city=doc.foro_city,
+        state=doc.foro_state,
+        contractor_legal_name=doc.contractor.legal_name,
+        contracted_legal_name=doc.contracted.legal_name,
+    )
+    next_order = max((s.sort_order for s in doc.sections), default=-1) + 1
+    doc.sections.append(
+        ProposalSection(
+            title=FORO_SECTION_DEFINITION["title"],
+            content_html=html,
+            sort_order=next_order,
+            is_core=True,
+            is_admin_managed=False,
+            is_editable=False,
+        )
+    )
+    return True
+
+
 def add_missing_admin_sections(
     doc: ContractProposalDocument,
     templates: list[ContractSectionTemplateDocument],
@@ -183,12 +227,18 @@ def add_missing_admin_sections(
     if missing:
         next_order = max((s.sort_order for s in doc.sections), default=-1) + 1
         for tmpl in missing:
+            if is_foro_title(tmpl.title):
+                continue
             doc.sections.append(section_from_template(tmpl, sort_order=next_order))
             next_order += 1
-        changed = True
+            changed = True
 
     if reorder_proposal_sections(doc, templates):
         changed = True
+    if ensure_foro_section(doc):
+        changed = True
+        if reorder_proposal_sections(doc, templates):
+            changed = True
     return changed
 
 
@@ -201,6 +251,11 @@ def upsert_template_section(
     """Add or update an admin template section on a negotiating minuta."""
     if doc.status not in NEGOTIATING_STATUSES:
         return False
+    if is_foro_title(tmpl.title):
+        removed = remove_template_section(doc, tmpl.id)
+        if removed and all_templates is not None:
+            reorder_proposal_sections(doc, all_templates)
+        return removed
     if not tmpl.is_active or not proposal_matches_template(doc, tmpl):
         removed = remove_template_section(doc, tmpl.id)
         if removed and all_templates is not None:
@@ -249,6 +304,7 @@ __all__ = [
     "NEGOTIATING_STATUSES",
     "add_missing_admin_sections",
     "contract_types_for_applies_to",
+    "ensure_foro_section",
     "proposal_matches_applies_to",
     "proposal_matches_template",
     "proposal_opportunity_type",

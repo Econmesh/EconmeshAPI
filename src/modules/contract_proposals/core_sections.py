@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 
 class CoreSectionDefinition(TypedDict):
@@ -10,6 +10,14 @@ class CoreSectionDefinition(TypedDict):
     title: str
     description: str
     sort_order: int
+
+
+class ClosingSectionDefinition(TypedDict):
+    key: str
+    title: str
+    description: str
+    sort_order: int
+    placement: Literal["end"]
 
 
 CORE_SECTION_DEFINITIONS: tuple[CoreSectionDefinition, ...] = (
@@ -57,6 +65,19 @@ CORE_SECTION_DEFINITIONS: tuple[CoreSectionDefinition, ...] = (
 
 CORE_SECTION_COUNT = len(CORE_SECTION_DEFINITIONS)
 
+FORO_SECTION_DEFINITION: ClosingSectionDefinition = {
+    "key": "foro",
+    "title": "Do Foro",
+    "description": (
+        "Última seção obrigatória do contrato. Elege o foro da comarca "
+        "(cidade e estado) e inclui o encerramento, a data gerada pelo "
+        "sistema e as linhas de assinatura das partes. Não pode ser "
+        "editada, excluída ou reordenada."
+    ),
+    "sort_order": 999,
+    "placement": "end",
+}
+
 # Legacy titles that may exist on older minutas
 _CORE_TITLE_ALIASES: dict[str, str] = {
     "das partes": "Das Partes",
@@ -66,6 +87,11 @@ _CORE_TITLE_ALIASES: dict[str, str] = {
     "do valor": "Do Valor",
     "prazo": "Do Prazo",
     "do prazo": "Do Prazo",
+}
+
+_FORO_TITLE_ALIASES: dict[str, str] = {
+    "foro": "Do Foro",
+    "do foro": "Do Foro",
 }
 
 
@@ -90,10 +116,28 @@ def core_title_sort_order(title: str) -> int | None:
     return None
 
 
+def is_foro_title(title: str) -> bool:
+    """Return True when ``title`` refers to the fixed Foro closing section."""
+    key = title.strip().lower()
+    if key in _FORO_TITLE_ALIASES:
+        return True
+    return key == FORO_SECTION_DEFINITION["title"].lower()
+
+
+def normalize_foro_title(title: str) -> str | None:
+    if is_foro_title(title):
+        return FORO_SECTION_DEFINITION["title"]
+    return None
+
+
 __all__ = [
     "CORE_SECTION_COUNT",
     "CORE_SECTION_DEFINITIONS",
+    "ClosingSectionDefinition",
     "CoreSectionDefinition",
+    "FORO_SECTION_DEFINITION",
     "core_title_sort_order",
+    "is_foro_title",
     "normalize_core_title",
+    "normalize_foro_title",
 ]

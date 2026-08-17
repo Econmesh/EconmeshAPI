@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from src.modules.contract_sections.model import ContractType
+from src.modules.platform_settings.model import ForoFillMode
 from src.shared.schemas.base import DomainDocument
 from src.shared.utils.ids import new_uuid
 
@@ -89,6 +90,9 @@ class ContractProposalDocument(DomainDocument):
     opportunity: OpportunitySnapshot
 
     sections: list[ProposalSection] = Field(default_factory=list)
+    foro_city: str | None = None
+    foro_state: str | None = None
+    foro_fill_mode: ForoFillMode = ForoFillMode.COMPANY
     pdf_file: ProposalPdfFile | None = None
 
     agreement_id: UUID | None = None

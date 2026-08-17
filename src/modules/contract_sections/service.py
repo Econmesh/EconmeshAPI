@@ -6,9 +6,13 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from src.core.exceptions import NotFoundError, ValidationAppError
-from src.modules.contract_proposals.core_sections import CORE_SECTION_DEFINITIONS
+from src.modules.contract_proposals.core_sections import (
+    CORE_SECTION_DEFINITIONS,
+    FORO_SECTION_DEFINITION,
+    is_foro_title,
+)
 from src.modules.contract_proposals.opportunity_contract import minuta_title_for
-from src.modules.contract_proposals.pdf_service import build_core_sections_html
+from src.modules.contract_proposals.pdf_service import build_core_sections_html, build_foro_html
 from src.modules.contract_proposals.section_sync import (
     proposal_opportunity_type,
     remove_template_section,
@@ -36,6 +40,7 @@ from src.modules.opportunities.model import OpportunityType
 
 if TYPE_CHECKING:
     from src.modules.contract_proposals.repository import ContractProposalsRepository
+    from src.modules.platform_settings.repository import PlatformSettingsRepository
 
 
 def _to_response(doc: ContractSectionTemplateDocument) -> ContractSectionResponse:
@@ -55,15 +60,32 @@ def _to_response(doc: ContractSectionTemplateDocument) -> ContractSectionRespons
 
 
 def _system_sections() -> list[SystemSectionInfo]:
-    return [
+    opening = [
         SystemSectionInfo(
             key=item["key"],
             title=item["title"],
             description=item["description"],
             sort_order=item["sort_order"],
+            placement="start",
         )
         for item in CORE_SECTION_DEFINITIONS
     ]
+    foro = SystemSectionInfo(
+        key=FORO_SECTION_DEFINITION["key"],
+        title=FORO_SECTION_DEFINITION["title"],
+        description=FORO_SECTION_DEFINITION["description"],
+        sort_order=FORO_SECTION_DEFINITION["sort_order"],
+        placement="end",
+    )
+    return opening + [foro]
+
+
+def _reject_foro_title(title: str | None) -> None:
+    if title and is_foro_title(title):
+        raise ValidationAppError(
+            "Do Foro é uma seção fixa do sistema e não pode ser criada como "
+            "template administrativo."
+        )
 
 
 class ContractSectionsService:
@@ -71,9 +93,11 @@ class ContractSectionsService:
         self,
         repository: ContractSectionsRepository,
         proposals_repo: ContractProposalsRepository | None = None,
+        platform_settings_repo: PlatformSettingsRepository | None = None,
     ) -> None:
         self._repo = repository
         self._proposals = proposals_repo
+        self._platform_settings = platform_settings_repo
 
     async def _sync_template_to_negotiating(
         self, template: ContractSectionTemplateDocument
@@ -135,6 +159,7 @@ class ContractSectionsService:
         contract_type: SectionAppliesTo | None = None,
         opportunity_type: OpportunityType | None = None,
     ) -> MinutaStructureResponse:
+        await self._repo.deactivate_foro_templates()
         admin_sections = await self._repo.list_sections(
             skip=0,
             limit=500,
@@ -144,7 +169,27 @@ class ContractSectionsService:
         )
         return MinutaStructureResponse(
             system_sections=_system_sections(),
-            admin_sections=[_to_response(doc) for doc in admin_sections],
+            admin_sections=[
+                _to_response(doc)
+                for doc in admin_sections
+                if not is_foro_title(doc.title)
+            ],
+        )
+
+    async def _preview_foro_html(self) -> str:
+        city = "São Paulo"
+        state = "SP"
+        if self._platform_settings is not None:
+            settings = await self._platform_settings.get_or_create()
+            if settings.foro_city:
+                city = settings.foro_city
+            if settings.foro_state:
+                state = settings.foro_state
+        return build_foro_html(
+            city=city,
+            state=state,
+            contractor_legal_name="Empresa Contratante Exemplo Ltda.",
+            contracted_legal_name="Empresa Contratada Exemplo Ltda.",
         )
 
     async def get_contract_preview(
@@ -179,6 +224,14 @@ class ContractSectionsService:
                 is_system=False,
             )
             for tmpl in templates
+            if not is_foro_title(tmpl.title)
+        )
+        sections.append(
+            ContractPreviewSection(
+                title=FORO_SECTION_DEFINITION["title"],
+                content_html=await self._preview_foro_html(),
+                is_system=True,
+            )
         )
         title = minuta_title_for(opportunity_type)
         sections_html = "".join(
@@ -197,6 +250,11 @@ h1 {{ font-size: 16pt; text-align: center; margin-bottom: 24pt; }}
 h2 {{ font-size: 12pt; margin-top: 18pt; margin-bottom: 8pt;
 border-bottom: 1px solid #ccc; padding-bottom: 4pt; }}
 .section-body p {{ margin: 0 0 8pt 0; }}
+.closing-date {{ text-align: center; margin-top: 18pt; }}
+.signatures {{ text-align: center; margin-top: 28pt; }}
+.signature {{ text-align: center; margin: 0; }}
+.signature-spacer {{ margin: 0; line-height: 1.6; }}
+.signature-next {{ margin-top: 36pt; }}
 </style>
 </head>
 <body>
@@ -241,6 +299,7 @@ border-bottom: 1px solid #ccc; padding-bottom: 4pt; }}
     async def create(
         self, payload: ContractSectionCreate, *, created_by: UUID
     ) -> ContractSectionResponse:
+        _reject_foro_title(payload.title)
         doc = ContractSectionTemplateDocument(
             title=payload.title,
             content_html=payload.content_html,
@@ -294,6 +353,7 @@ border-bottom: 1px solid #ccc; padding-bottom: 4pt; }}
         self, *, contract_type: ContractType
     ) -> ContractSectionListResponse:
         items = await self._repo.list_active_by_type(contract_type)
+        items = [doc for doc in items if not is_foro_title(doc.title)]
         return ContractSectionListResponse(
             items=[_to_response(doc) for doc in items],
             total=len(items),
@@ -308,6 +368,8 @@ border-bottom: 1px solid #ccc; padding-bottom: 4pt; }}
         if existing is None:
             raise NotFoundError("Contract section not found.")
         patch = payload.model_dump(exclude_unset=True)
+        if "title" in patch:
+            _reject_foro_title(patch["title"])
         updated = await self._repo.update(section_id, patch)
         if updated is None:
             raise NotFoundError("Contract section not found.")

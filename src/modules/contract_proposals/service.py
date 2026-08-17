@@ -12,6 +12,10 @@ from src.modules.agreements.service import AgreementsService
 from src.modules.auth.repository import AuthRepository
 from src.modules.companies.model import CompanyDocument
 from src.modules.companies.repository import CompaniesRepository
+from src.modules.contract_proposals.core_sections import (
+    FORO_SECTION_DEFINITION,
+    is_foro_title,
+)
 from src.modules.contract_proposals.model import (
     ContractProposalDocument,
     ContractProposalStatus,
@@ -26,6 +30,7 @@ from src.modules.contract_proposals.opportunity_contract import (
 )
 from src.modules.contract_proposals.pdf_service import (
     build_core_sections_html,
+    build_foro_html,
     pdf_page_count,
     render_proposal_pdf,
     sha256_bytes,
@@ -50,7 +55,9 @@ from src.modules.contract_proposals.schema import (
 from src.modules.contract_proposals.section_sync import (
     NEGOTIATING_STATUSES,
     add_missing_admin_sections,
+    ensure_foro_section,
     proposal_opportunity_type,
+    reorder_proposal_sections,
 )
 from src.modules.contract_sections.repository import ContractSectionsRepository
 from src.modules.conversations.model import (
@@ -69,6 +76,9 @@ from src.modules.conversations.service import (
 )
 from src.modules.opportunities.model import OpportunityPeriodicity
 from src.modules.opportunities.repository import OpportunitiesRepository
+from src.modules.platform_settings.model import ForoFillMode
+from src.modules.platform_settings.repository import PlatformSettingsRepository
+from src.shared.constants.brazil_states import STATE_NEIGHBORS
 from src.shared.utils.ids import new_uuid
 from src.shared.utils.storage_keys import build_storage_key
 from src.shared.utils.time import utcnow
@@ -158,6 +168,7 @@ class ContractProposalsService:
         agreements_service: AgreementsService,
         messages_repo: ConversationMessagesRepository | None = None,
         realtime: ConversationRealtimePublisher | None = None,
+        platform_settings_repository: PlatformSettingsRepository | None = None,
     ) -> None:
         self._repo = repository
         self._conversations = conversations_repo
@@ -168,6 +179,7 @@ class ContractProposalsService:
         self._agreements = agreements_service
         self._messages = messages_repo
         self._realtime = realtime
+        self._platform_settings = platform_settings_repository
 
     async def _resolve_user(self, firebase_uid: str):
         user = await self._auth.get_by_firebase_uid(firebase_uid)
@@ -187,6 +199,75 @@ class ContractProposalsService:
         if role is None:
             raise ForbiddenError("You do not have access to this contract proposal.")
         return role
+
+    @staticmethod
+    def _is_admin_foro_mode(mode: ForoFillMode | str | None) -> bool:
+        return mode in (ForoFillMode.ADMIN, ForoFillMode.ADMIN.value, "admin")
+
+    async def _resolve_foro_settings(
+        self,
+    ) -> tuple[ForoFillMode, str | None, str | None]:
+        if self._platform_settings is None:
+            return ForoFillMode.COMPANY, None, None
+        settings = await self._platform_settings.get_or_create()
+        mode = settings.foro_fill_mode
+        if mode in (ForoFillMode.ADMIN, ForoFillMode.ADMIN.value, "admin"):
+            mode = ForoFillMode.ADMIN
+        else:
+            mode = ForoFillMode.COMPANY
+        return mode, settings.foro_city, settings.foro_state
+
+    def _refresh_foro_html(
+        self, doc: ContractProposalDocument, *, signed_at=None
+    ) -> None:
+        html = build_foro_html(
+            city=doc.foro_city,
+            state=doc.foro_state,
+            contractor_legal_name=doc.contractor.legal_name,
+            contracted_legal_name=doc.contracted.legal_name,
+            signed_at=signed_at,
+        )
+        found = False
+        for index, section in enumerate(doc.sections):
+            if is_foro_title(section.title):
+                doc.sections[index] = section.model_copy(
+                    update={
+                        "title": FORO_SECTION_DEFINITION["title"],
+                        "content_html": html,
+                        "is_core": True,
+                        "is_editable": False,
+                        "is_admin_managed": False,
+                        "template_id": None,
+                    }
+                )
+                found = True
+        if not found:
+            doc.sections.append(
+                ProposalSection(
+                    title=FORO_SECTION_DEFINITION["title"],
+                    content_html=html,
+                    sort_order=len(doc.sections),
+                    is_core=True,
+                    is_admin_managed=False,
+                    is_editable=False,
+                )
+            )
+
+    async def _apply_foro_settings(self, doc: ContractProposalDocument) -> bool:
+        mode, city, state = await self._resolve_foro_settings()
+        changed = False
+        if doc.foro_fill_mode != mode:
+            doc.foro_fill_mode = mode
+            changed = True
+        if self._is_admin_foro_mode(mode) and (
+            doc.foro_city != city or doc.foro_state != state
+        ):
+            doc.foro_city = city
+            doc.foro_state = state
+            changed = True
+        if changed:
+            self._refresh_foro_html(doc)
+        return changed
 
     async def _sync_missing_admin_sections(
         self, doc: ContractProposalDocument
@@ -209,10 +290,12 @@ class ContractProposalsService:
         changed = False
         filtered: list[ProposalSection] = []
         for section in doc.sections:
-            if (
-                section.is_admin_managed
-                and section.template_id is not None
-                and section.template_id not in template_ids
+            if section.is_admin_managed and (
+                is_foro_title(section.title)
+                or (
+                    section.template_id is not None
+                    and section.template_id not in template_ids
+                )
             ):
                 changed = True
                 continue
@@ -220,6 +303,12 @@ class ContractProposalsService:
         doc.sections = filtered
         if add_missing_admin_sections(doc, templates):
             changed = True
+        if await self._apply_foro_settings(doc):
+            changed = True
+        if ensure_foro_section(doc):
+            changed = True
+            if reorder_proposal_sections(doc, templates):
+                changed = True
         if changed:
             return await self._repo.replace(doc)
         return doc
@@ -231,6 +320,21 @@ class ContractProposalsService:
         pdf = None
         if doc.pdf_file:
             pdf = ProposalPdfFileResponse.model_validate(doc.pdf_file.model_dump())
+        foro_html = build_foro_html(
+            city=doc.foro_city,
+            state=doc.foro_state,
+            contractor_legal_name=doc.contractor.legal_name,
+            contracted_legal_name=doc.contracted.legal_name,
+        )
+        section_responses: list[ProposalSectionResponse] = []
+        for section in sorted(doc.sections, key=lambda x: x.sort_order):
+            payload = section.model_dump()
+            if is_foro_title(section.title):
+                payload["content_html"] = foro_html
+                payload["title"] = FORO_SECTION_DEFINITION["title"]
+                payload["is_core"] = True
+                payload["is_editable"] = False
+            section_responses.append(ProposalSectionResponse.model_validate(payload))
         return ContractProposalResponse(
             id=doc.id,
             conversation_id=doc.conversation_id,
@@ -248,10 +352,10 @@ class ContractProposalsService:
             opportunity=OpportunitySnapshotResponse.model_validate(
                 doc.opportunity.model_dump()
             ),
-            sections=[
-                ProposalSectionResponse.model_validate(s.model_dump())
-                for s in sorted(doc.sections, key=lambda x: x.sort_order)
-            ],
+            sections=section_responses,
+            foro_city=doc.foro_city,
+            foro_state=doc.foro_state,
+            foro_fill_mode=doc.foro_fill_mode,
             pdf_file=pdf,
             agreement_id=doc.agreement_id,
             change_request_message=doc.change_request_message,
@@ -343,6 +447,8 @@ class ContractProposalsService:
             )
         base = len(sections)
         for offset, tmpl in enumerate(templates):
+            if is_foro_title(tmpl.title):
+                continue
             sections.append(
                 ProposalSection(
                     title=tmpl.title,
@@ -354,6 +460,11 @@ class ContractProposalsService:
                     template_id=tmpl.id,
                 )
             )
+
+        foro_mode, foro_city, foro_state = await self._resolve_foro_settings()
+        if not self._is_admin_foro_mode(foro_mode):
+            foro_city = contracted.city
+            foro_state = contracted.state
 
         doc = ContractProposalDocument(
             conversation_id=conversation.id,
@@ -370,7 +481,13 @@ class ContractProposalsService:
             contracted=contracted,
             opportunity=opp_snap,
             sections=sections,
+            foro_city=foro_city,
+            foro_state=foro_state,
+            foro_fill_mode=foro_mode,
         )
+        ensure_foro_section(doc)
+        reorder_proposal_sections(doc, templates)
+        self._refresh_foro_html(doc)
         await self._repo.create(doc)
         await self._log_negotiation_event(
             conversation_id=conversation.id,
@@ -467,8 +584,40 @@ class ContractProposalsService:
         if payload.opportunity is not None:
             for key, value in payload.opportunity.model_dump(exclude_unset=True).items():
                 setattr(doc.opportunity, key, value)
+
+        foro_touched = (
+            "foro_city" in payload.model_fields_set
+            or "foro_state" in payload.model_fields_set
+        )
+        if foro_touched:
+            live_mode, _, _ = await self._resolve_foro_settings()
+            if self._is_admin_foro_mode(live_mode) or self._is_admin_foro_mode(
+                doc.foro_fill_mode
+            ):
+                raise ValidationAppError(
+                    "A comarca do foro é definida pelo administrador."
+                )
+            if "foro_city" in payload.model_fields_set:
+                city = (payload.foro_city or "").strip()
+                doc.foro_city = city or None
+            if "foro_state" in payload.model_fields_set:
+                state = (payload.foro_state or "").strip().upper()
+                if state and state not in STATE_NEIGHBORS:
+                    raise ValidationAppError("Informe um estado (UF) válido para o foro.")
+                doc.foro_state = state or None
+
         if payload.sections is not None:
             doc.sections = self._normalize_sections(payload.sections, existing=doc.sections)
+
+        await self._apply_foro_settings(doc)
+        ensure_foro_section(doc)
+        opp_type = proposal_opportunity_type(doc)
+        if opp_type is not None:
+            templates = await self._sections.list_active_by_opportunity_type(opp_type)
+        else:
+            templates = await self._sections.list_active_by_type(doc.contract_type)
+        reorder_proposal_sections(doc, templates)
+        self._refresh_foro_html(doc)
 
         if doc.status == ContractProposalStatus.CHANGES_REQUESTED:
             doc.status = ContractProposalStatus.DRAFT
@@ -655,6 +804,10 @@ class ContractProposalsService:
                 missing.append(f"{label}: representante legal")
         if not doc.sections:
             missing.append("seções")
+        if not (doc.foro_city or "").strip():
+            missing.append("Foro: cidade")
+        if not (doc.foro_state or "").strip():
+            missing.append("Foro: estado")
         if missing:
             raise ValidationAppError(
                 "Campos obrigatórios ausentes para gerar o PDF.",
@@ -675,6 +828,8 @@ class ContractProposalsService:
             raise ValidationAppError("PDF só pode ser gerado em rascunho.")
 
         doc = await self._sync_missing_admin_sections(doc)
+        await self._apply_foro_settings(doc)
+        self._refresh_foro_html(doc)
 
         self._validate_for_pdf(doc)
         pdf_bytes = render_proposal_pdf(doc)
@@ -720,6 +875,7 @@ class ContractProposalsService:
             raise ValidationAppError("PDF da minuta não encontrado.")
 
         agreement_title = to_agreement_title(doc.title)
+        self._refresh_foro_html(doc)
         # Regenerate PDF with agreement title (without "Minuta de").
         pdf_source = doc.model_copy(update={"title": agreement_title})
         pdf_bytes = render_proposal_pdf(pdf_source)

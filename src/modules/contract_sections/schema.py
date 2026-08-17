@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import Field
@@ -48,6 +49,7 @@ class SystemSectionInfo(APIModel):
     can_edit: bool = False
     can_delete: bool = False
     can_reorder: bool = False
+    placement: Literal["start", "end"] = "start"
 
 
 class MinutaStructureResponse(APIModel):

@@ -22,6 +22,7 @@ from src.modules.conversations.repository import (
 )
 from src.modules.notifications.repository import UserNotificationsRepository
 from src.modules.opportunities.repository import OpportunitiesRepository
+from src.modules.platform_settings.repository import PlatformSettingsRepository
 from src.modules.users.repository import UsersRepository
 from src.modules.visual_signatures.deps import build_visual_signatures_service
 
@@ -60,6 +61,7 @@ def build_contract_proposals_controller(
         agreements_service=agreements,
         messages_repo=ConversationMessagesRepository(db),
         realtime=ConversationRealtimePublisher(redis),
+        platform_settings_repository=PlatformSettingsRepository(db),
     )
     return ContractProposalsController(service)
 
