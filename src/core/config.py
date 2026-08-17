@@ -7,12 +7,16 @@ to provide a thread-safe singleton.
 
 from __future__ import annotations
 
+import base64
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 32-byte key used only when DATA_ENCRYPTION_KEY is unset outside production.
+_DEV_DATA_ENCRYPTION_KEY = base64.b64encode(bytes(range(32))).decode("ascii")
 
 
 class Environment(StrEnum):
@@ -63,6 +67,9 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = Field(default_factory=lambda: ["*"])
     TRUSTED_HOSTS: list[str] = Field(default_factory=lambda: ["*"])
     RATE_LIMIT_DEFAULT: str = "100/minute"
+    # Base64-encoded 32-byte AES-256 key for field-level encryption.
+    # Required in production. Development/test fall back to a local-only key.
+    DATA_ENCRYPTION_KEY: str = ""
 
     # --- MongoDB --------------------------------------------------------------
     MONGO_URI: str = "mongodb://localhost:27017"
@@ -148,6 +155,21 @@ class Settings(BaseSettings):
         if self.MAIL_ENABLED and not self.SMTP_HOST:
             raise ValueError("SMTP_HOST is required when MAIL_ENABLED is true.")
         return self
+
+    def data_encryption_key_bytes(self) -> bytes:
+        """Return the 32-byte AES key used for field-level encryption."""
+        raw = self.DATA_ENCRYPTION_KEY.strip()
+        if not raw:
+            if self.is_production:
+                raise RuntimeError("DATA_ENCRYPTION_KEY is required in production.")
+            raw = _DEV_DATA_ENCRYPTION_KEY
+        try:
+            key = base64.b64decode(raw, validate=True)
+        except ValueError as exc:
+            raise ValueError("DATA_ENCRYPTION_KEY must be valid base64.") from exc
+        if len(key) != 32:
+            raise ValueError("DATA_ENCRYPTION_KEY must decode to exactly 32 bytes.")
+        return key
 
     @property
     def is_production(self) -> bool:

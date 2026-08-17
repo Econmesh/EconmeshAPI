@@ -13,9 +13,10 @@ from src.core.database import mongo
 from src.core.logging import get_logger, setup_logging
 from src.modules.auth.repository import AuthRepository, EmailVerificationRepository
 from src.modules.agreements.repository import AgreementEventsRepository, AgreementsRepository
+from src.modules.billing.repository import BillingRepository
+from src.modules.blog.repository import BlogPostsRepository
 from src.modules.coming_soon.repository import ComingSoonRepository
 from src.modules.companies.repository import CompaniesRepository
-from src.modules.blog.repository import BlogPostsRepository
 from src.modules.notifications.repository import (
     NotificationCampaignsRepository,
     NotificationGroupsRepository,
@@ -28,9 +29,13 @@ from src.modules.conversations.repository import (
 )
 from src.modules.contract_proposals.repository import ContractProposalsRepository
 from src.modules.contract_sections.repository import ContractSectionsRepository
+from src.modules.platform_settings.repository import PlatformSettingsRepository
 from src.modules.support.repository import SupportMessagesRepository, SupportTicketsRepository
 from src.modules.users.repository import UsersRepository
-from src.modules.billing.repository import BillingRepository
+from src.modules.visual_signatures.repository import (
+    VisualSignatureEventsRepository,
+    VisualSignaturesRepository,
+)
 
 logger = get_logger(__name__)
 
@@ -58,7 +63,10 @@ async def _main() -> None:
         await ContractSectionsRepository(mongo.db).ensure_indexes()
         await ContractProposalsRepository(mongo.db).ensure_indexes()
         await UsersRepository(mongo.db).ensure_indexes()
+        await VisualSignaturesRepository(mongo.db).ensure_indexes()
+        await VisualSignatureEventsRepository(mongo.db).ensure_indexes()
         await BillingRepository(mongo.db).ensure_indexes()
+        await PlatformSettingsRepository(mongo.db).ensure_indexes()
         logger.info("indexes_done")
     finally:
         await mongo.close()

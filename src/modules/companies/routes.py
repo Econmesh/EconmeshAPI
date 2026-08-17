@@ -106,7 +106,7 @@ async def upload_company_logo(
 @router.post(
     "/{company_id}/documents/{kind}/upload",
     response_model=CompanyResponse,
-    summary="Upload or replace a company compliance document (operating_license or mtr).",
+    summary="Upload or replace a company compliance document.",
     status_code=status.HTTP_200_OK,
 )
 async def upload_company_document(

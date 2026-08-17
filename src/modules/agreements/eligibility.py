@@ -41,7 +41,11 @@ def personal_missing_fields(
     return missing
 
 
-def company_missing_fields(company: CompanyDocument) -> list[str]:
+def company_missing_fields(
+    company: CompanyDocument,
+    *,
+    require_signature_authorization: bool = False,
+) -> list[str]:
     missing: list[str] = []
     if not company.legal_name:
         missing.append("company.legal_name")
@@ -68,14 +72,26 @@ def company_missing_fields(company: CompanyDocument) -> list[str]:
         ):
             if not field:
                 missing.append(key)
-    if not company.operating_license or not company.operating_license.storage_key:
+    if (
+        not company.operating_license
+        or not company.operating_license.storage_key
+        or company.operating_license.status != ComplianceDocumentStatus.APPROVED
+    ):
         missing.append("company.operating_license")
-    elif company.operating_license.status != ComplianceDocumentStatus.APPROVED:
-        missing.append("company.operating_license")
-    if not company.mtr_document or not company.mtr_document.storage_key:
+    if (
+        not company.mtr_document
+        or not company.mtr_document.storage_key
+        or company.mtr_document.status != ComplianceDocumentStatus.APPROVED
+    ):
         missing.append("company.mtr_document")
-    elif company.mtr_document.status != ComplianceDocumentStatus.APPROVED:
-        missing.append("company.mtr_document")
+    if require_signature_authorization:
+        auth_doc = company.signature_authorization
+        if (
+            not auth_doc
+            or not auth_doc.storage_key
+            or auth_doc.status != ComplianceDocumentStatus.APPROVED
+        ):
+            missing.append("company.signature_authorization")
     return missing
 
 

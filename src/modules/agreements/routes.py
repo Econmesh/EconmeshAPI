@@ -30,12 +30,14 @@ from src.modules.agreements.schema import (
 )
 from src.modules.agreements.service import AgreementsService
 from src.modules.auth.repository import AuthRepository
+from src.modules.billing.deps import require_active_subscription
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.conversations.repository import ConversationMessagesRepository
 from src.modules.notifications.repository import UserNotificationsRepository
 from src.modules.opportunities.repository import OpportunitiesRepository
+from src.modules.platform_settings.repository import PlatformSettingsRepository
 from src.modules.users.repository import UsersRepository
-from src.modules.billing.deps import require_active_subscription
+from src.modules.visual_signatures.deps import build_visual_signatures_service
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
 from src.shared.dependencies.redis import get_redis
@@ -75,6 +77,8 @@ def _build_controller(
         notifications=notifications,
         messages_repository=ConversationMessagesRepository(db),
         opportunities_repository=OpportunitiesRepository(db),
+        platform_settings_repository=PlatformSettingsRepository(db),
+        visual_signatures_service=build_visual_signatures_service(db),
     )
     return AgreementsController(service)
 

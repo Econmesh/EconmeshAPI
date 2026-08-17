@@ -46,9 +46,13 @@ from src.modules.dashboard import router as dashboard_router
 from src.modules.files import router as files_router
 from src.modules.opportunities import router as opportunities_router
 from src.modules.notifications import router as notifications_router
+from src.modules.platform_settings import admin_router as platform_settings_admin_router
+from src.modules.platform_settings import router as platform_settings_router
 from src.modules.support import router as support_router
 from src.modules.support.public_routes import router as public_support_router
 from src.modules.users import router as users_router
+from src.modules.visual_signatures import admin_router as visual_signatures_admin_router
+from src.modules.visual_signatures import router as visual_signatures_router
 from src.shared.middleware import (
     AccessLogMiddleware,
     RequestIDMiddleware,
@@ -163,6 +167,8 @@ def _register_routers(app: FastAPI, settings: Settings) -> None:
     api_v1.include_router(blog_router)
     api_v1.include_router(coming_soon_router)
     api_v1.include_router(users_router)
+    api_v1.include_router(visual_signatures_router)
+    api_v1.include_router(visual_signatures_admin_router)
     api_v1.include_router(companies_router)
     api_v1.include_router(opportunities_router)
     api_v1.include_router(agreements_router)
@@ -175,6 +181,8 @@ def _register_routers(app: FastAPI, settings: Settings) -> None:
     api_v1.include_router(billing_router)
     api_v1.include_router(billing_admin_router)
     api_v1.include_router(billing_webhook_router)
+    api_v1.include_router(platform_settings_router)
+    api_v1.include_router(platform_settings_admin_router)
     api_v1.include_router(circularity_router)
     api_v1.include_router(files_router)
     api_v1.include_router(blockchain_router)
