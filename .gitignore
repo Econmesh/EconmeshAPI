@@ -16,9 +16,6 @@ venv/
 env/
 ENV/
 
-# Poetry
-poetry.lock
-
 # Testing & coverage
 .pytest_cache/
 .coverage
