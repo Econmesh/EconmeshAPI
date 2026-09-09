@@ -136,6 +136,32 @@ class ResendVerificationRequest(APIModel):
     email: EmailStr
 
 
+class ForgotPasswordRequest(APIModel):
+    """Body for ``POST /auth/forgot-password``."""
+
+    email: EmailStr
+    continue_url: str = Field(..., min_length=8, max_length=500)
+
+
+class VerifyPasswordResetRequest(APIModel):
+    """Body for ``POST /auth/verify-password-reset``."""
+
+    oob_code: str = Field(..., min_length=10, max_length=2048)
+
+
+class VerifyPasswordResetResponse(APIModel):
+    """Email associated with a valid password-reset code."""
+
+    email: EmailStr
+
+
+class ConfirmPasswordResetRequest(APIModel):
+    """Body for ``POST /auth/confirm-password-reset``."""
+
+    oob_code: str = Field(..., min_length=10, max_length=2048)
+    password: str = Field(..., min_length=_PASSWORD_MIN_LENGTH, max_length=_PASSWORD_MAX_LENGTH)
+
+
 class MeResponse(APIModel):
     """Identity envelope returned by ``GET /auth/me``."""
 
@@ -191,6 +217,10 @@ __all__ = [
     "RegisterRequest",
     "RegisterResponse",
     "ResendVerificationRequest",
+    "ForgotPasswordRequest",
+    "VerifyPasswordResetRequest",
+    "VerifyPasswordResetResponse",
+    "ConfirmPasswordResetRequest",
     "TokenIntrospectionResponse",
     "VerifyAccountRequest",
 ]

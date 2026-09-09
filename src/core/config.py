@@ -18,6 +18,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 32-byte key used only when DATA_ENCRYPTION_KEY is unset outside production.
 _DEV_DATA_ENCRYPTION_KEY = base64.b64encode(bytes(range(32))).decode("ascii")
 
+# Local frontends (app :3001, admin :3002) must be allowed in development even
+# when CORS_ORIGINS is copied from a production list.
+_DEV_CORS_ORIGINS = (
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:3002",
+)
+
 
 class Environment(StrEnum):
     """Deployment environments."""
@@ -154,6 +165,14 @@ class Settings(BaseSettings):
             raise ValueError("SMTP_USE_TLS and SMTP_USE_SSL are mutually exclusive.")
         if self.MAIL_ENABLED and not self.SMTP_HOST:
             raise ValueError("SMTP_HOST is required when MAIL_ENABLED is true.")
+        return self
+
+    @model_validator(mode="after")
+    def _ensure_dev_cors_origins(self) -> Settings:
+        if not self.is_development or "*" in self.CORS_ORIGINS:
+            return self
+        merged = list(dict.fromkeys([*self.CORS_ORIGINS, *_DEV_CORS_ORIGINS]))
+        self.CORS_ORIGINS = merged
         return self
 
     def data_encryption_key_bytes(self) -> bytes:

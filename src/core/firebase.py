@@ -311,6 +311,81 @@ class FirebaseAdmin:
         except firebase_auth.UserNotFoundError:
             return
 
+    async def generate_password_reset_link(self, email: str) -> str:
+        """Return a Firebase password-reset URL for ``email``."""
+        auth_app = self._require_auth_app()
+        try:
+            return await asyncio.to_thread(
+                firebase_auth.generate_password_reset_link, email, app=auth_app
+            )
+        except firebase_auth.UserNotFoundError as exc:
+            raise NotFoundError("Firebase user not found.", code="user_not_found") from exc
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("firebase_password_reset_link_failed")
+            raise ExternalServiceError("Unable to create the password reset link.") from exc
+
+    async def verify_password_reset_code(self, oob_code: str) -> str:
+        """Return the account email for a valid reset code."""
+        auth_app = self._require_auth_app()
+        try:
+            email: str = await asyncio.to_thread(
+                firebase_auth.verify_password_reset_code, oob_code, app=auth_app
+            )
+            return email
+        except Exception as exc:  # noqa: BLE001
+            name = type(exc).__name__
+            if "Expired" in name:
+                raise AuthError("Password reset link expired.", code="reset_code_expired") from exc
+            if "Invalid" in name or "Oob" in name:
+                raise AuthError("Password reset link is invalid.", code="reset_code_invalid") from exc
+            logger.exception("firebase_verify_password_reset_failed")
+            raise AuthError("Password reset link is invalid.", code="reset_code_invalid") from exc
+
+    async def confirm_password_reset(self, oob_code: str, new_password: str) -> None:
+        """Consume a reset code and set a new password via Identity Toolkit."""
+        auth_app = self._require_auth_app()
+
+        def _reset() -> None:
+            from urllib.error import HTTPError
+            from urllib.request import Request, urlopen
+
+            import google.auth.transport.requests
+
+            google_cred = auth_app.credential.get_credential()
+            google_cred.refresh(google.auth.transport.requests.Request())
+            payload = json.dumps(
+                {"oobCode": oob_code, "newPassword": new_password}
+            ).encode("utf-8")
+            req = Request(
+                "https://identitytoolkit.googleapis.com/v1/accounts:resetPassword",
+                data=payload,
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {google_cred.token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            try:
+                with urlopen(req, timeout=20) as resp:  # noqa: S310
+                    resp.read()
+            except HTTPError as exc:
+                raw = exc.read().decode("utf-8", errors="replace")
+                raise RuntimeError(raw) from exc
+
+        try:
+            await asyncio.to_thread(_reset)
+        except Exception as exc:  # noqa: BLE001
+            text = str(exc)
+            lowered = text.lower()
+            if "expired" in lowered:
+                raise AuthError("Password reset link expired.", code="reset_code_expired") from exc
+            if "oob" in lowered or "invalid" in lowered:
+                raise AuthError("Password reset link is invalid.", code="reset_code_invalid") from exc
+            if "weak" in lowered or "password" in lowered:
+                raise AuthError("Password does not meet the security requirements.", code="invalid_credentials") from exc
+            logger.exception("firebase_confirm_password_reset_failed")
+            raise ExternalServiceError("Unable to reset the password.") from exc
+
     # -------------------------------------------------------------- storage
     def _storage_bucket_name(self) -> str:
         bucket = self._settings.FIREBASE_STORAGE_BUCKET

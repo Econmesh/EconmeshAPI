@@ -14,6 +14,8 @@ from src.modules.auth.controller import AuthController
 from src.modules.auth.repository import AuthRepository, EmailVerificationRepository
 from src.modules.auth.schema import (
     AdminRegisterRequest,
+    ConfirmPasswordResetRequest,
+    ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
     MeResponse,
@@ -21,6 +23,8 @@ from src.modules.auth.schema import (
     RegisterResponse,
     ResendVerificationRequest,
     VerifyAccountRequest,
+    VerifyPasswordResetRequest,
+    VerifyPasswordResetResponse,
 )
 from src.modules.auth.service import AuthService
 from src.modules.companies.compliance_review import build_compliance_review_service
@@ -118,6 +122,42 @@ async def resend_verification(
     payload: ResendVerificationRequest, controller: ControllerDep
 ) -> MessageResponse:
     return await controller.resend_verification(payload.email)
+
+
+@router.post(
+    "/forgot-password",
+    response_model=MessageResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Send a password-reset email that opens the app handler.",
+)
+async def forgot_password(
+    payload: ForgotPasswordRequest, controller: ControllerDep
+) -> MessageResponse:
+    return await controller.request_password_reset(payload)
+
+
+@router.post(
+    "/verify-password-reset",
+    response_model=VerifyPasswordResetResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Validate a password-reset code without consuming it.",
+)
+async def verify_password_reset(
+    payload: VerifyPasswordResetRequest, controller: ControllerDep
+) -> VerifyPasswordResetResponse:
+    return await controller.verify_password_reset(payload)
+
+
+@router.post(
+    "/confirm-password-reset",
+    response_model=MessageResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Set a new password using a valid reset code.",
+)
+async def confirm_password_reset(
+    payload: ConfirmPasswordResetRequest, controller: ControllerDep
+) -> MessageResponse:
+    return await controller.confirm_password_reset(payload)
 
 
 @router.post(

@@ -153,6 +153,30 @@ class EmailSender:
         )
         await self.send(to=to, subject=subject, text_body=text_body, html_body=html_body)
 
+    async def send_password_reset(self, *, to: str, reset_url: str) -> None:
+        """Send a password-reset email that lands on the app handler."""
+        subject = "Redefinir senha — Econmesh"
+        text_body = (
+            "Recebemos um pedido para redefinir a senha da sua conta Econmesh.\n\n"
+            "Abra o link abaixo para escolher uma nova senha. O link expira e "
+            "só o e-mail mais recente funciona:\n"
+            f"{reset_url}\n\n"
+            "Se você não pediu isso, ignore este e-mail."
+        )
+        safe_url = escape(reset_url, quote=True)
+        html_body = (
+            "<p>Recebemos um pedido para redefinir a senha da sua conta "
+            "<strong>Econmesh</strong>.</p>"
+            "<p>Clique no botão abaixo para escolher uma nova senha. "
+            "O link expira e só o e-mail mais recente funciona.</p>"
+            f'<p><a href="{safe_url}" '
+            'style="display:inline-block;padding:10px 18px;background:#0f766e;'
+            'color:#fff;text-decoration:none;border-radius:6px">Redefinir senha</a></p>'
+            f'<p>Ou cole este endereço no navegador:<br><a href="{safe_url}">{safe_url}</a></p>'
+            "<p style=\"color:#666;font-size:12px\">Se você não pediu isso, ignore este e-mail.</p>"
+        )
+        await self.send(to=to, subject=subject, text_body=text_body, html_body=html_body)
+
 
 email_sender = EmailSender()
 """Process-wide singleton."""
