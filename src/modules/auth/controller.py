@@ -6,11 +6,15 @@ from fastapi import UploadFile
 
 from src.modules.auth.schema import (
     AdminRegisterRequest,
+    ConfirmPasswordResetRequest,
+    ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
     MeResponse,
     RegisterRequest,
     RegisterResponse,
+    VerifyPasswordResetRequest,
+    VerifyPasswordResetResponse,
 )
 from src.modules.auth.service import AuthService
 from src.shared.dependencies.auth import CurrentUser
@@ -42,6 +46,20 @@ class AuthController:
 
     async def resend_verification(self, email: str) -> MessageResponse:
         return await self._service.resend_verification(email)
+
+    async def request_password_reset(self, payload: ForgotPasswordRequest) -> MessageResponse:
+        return await self._service.request_password_reset(payload.email, payload.continue_url)
+
+    async def verify_password_reset(
+        self, payload: VerifyPasswordResetRequest
+    ) -> VerifyPasswordResetResponse:
+        email = await self._service.verify_password_reset(payload.oob_code)
+        return VerifyPasswordResetResponse(email=email)
+
+    async def confirm_password_reset(
+        self, payload: ConfirmPasswordResetRequest
+    ) -> MessageResponse:
+        return await self._service.confirm_password_reset(payload.oob_code, payload.password)
 
     async def login(self, payload: LoginRequest) -> LoginResponse:
         return await self._service.login_with_id_token(payload.id_token)

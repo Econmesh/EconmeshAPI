@@ -8,7 +8,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from fastapi import UploadFile
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 from src.core.config import Environment, Settings, get_settings
 from src.core.exceptions import AuthError, ConflictError, ForbiddenError, NotFoundError, ValidationAppError
@@ -250,6 +250,72 @@ class AuthService:
         if exposed is not None:
             return MessageResponse(message=generic.message, data={"verification_token": exposed})
         return generic
+
+    async def request_password_reset(self, email: str, continue_url: str) -> MessageResponse:
+        """Email a one-time reset link that opens the app, not Firebase Hosting."""
+        generic = MessageResponse(
+            message="If the account exists, a password reset email was sent."
+        )
+        if not self._is_allowed_reset_continue_url(continue_url):
+            logger.warning("password_reset_continue_url_rejected", host=urlparse(continue_url).hostname)
+            return generic
+
+        firebase_user = await self._firebase.get_user_by_email(email)
+        if firebase_user is None:
+            return generic
+        if not await self._claim_resend_slot(f"reset:{email}"):
+            return generic
+
+        try:
+            generated = await self._firebase.generate_password_reset_link(email)
+            reset_url = self._app_reset_url(continue_url=continue_url, generated_link=generated)
+            await self._email.send_password_reset(to=email, reset_url=reset_url)
+        except Exception:  # noqa: BLE001
+            logger.exception("password_reset_email_failed")
+            return generic
+
+        logger.info("password_reset_email_sent")
+        return generic
+
+    async def verify_password_reset(self, oob_code: str) -> str:
+        return await self._firebase.verify_password_reset_code(oob_code)
+
+    async def confirm_password_reset(self, oob_code: str, password: str) -> MessageResponse:
+        await self._firebase.confirm_password_reset(oob_code, password)
+        return MessageResponse(message="Password updated. You can now sign in.")
+
+    def _is_allowed_reset_continue_url(self, url: str) -> bool:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"}:
+            return False
+        if parsed.path.rstrip("/") != "/reset-password":
+            return False
+        host = (parsed.hostname or "").lower()
+        if host in {"localhost", "127.0.0.1"}:
+            return True
+        allowed: set[str] = set()
+        for origin in self._settings.CORS_ORIGINS:
+            if origin == "*":
+                continue
+            hostname = urlparse(origin).hostname
+            if hostname:
+                allowed.add(hostname.lower())
+        frontend_host = urlparse(self._settings.FRONTEND_APP_URL).hostname
+        if frontend_host:
+            allowed.add(frontend_host.lower())
+        return host in allowed
+
+    @staticmethod
+    def _app_reset_url(*, continue_url: str, generated_link: str) -> str:
+        params = parse_qs(urlparse(generated_link).query)
+        oob = (params.get("oobCode") or [None])[0]
+        if not oob:
+            raise RuntimeError("Generated password reset link is missing oobCode.")
+        base = urlparse(continue_url)
+        query = dict(parse_qsl(base.query, keep_blank_values=True))
+        query["mode"] = "resetPassword"
+        query["oobCode"] = oob
+        return urlunparse(base._replace(query=urlencode(query)))
 
     # ---------------------------------------------------------------- login
     async def login_with_id_token(self, id_token: str) -> LoginResponse:
