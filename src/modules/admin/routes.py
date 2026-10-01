@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from src.modules.admin.controller import AdminController
+from src.modules.dmc.deps import build_admin_service
 from src.modules.admin.schema import (
     AdminCompanyCreate,
     AdminCompanyListResponse,
@@ -194,6 +195,7 @@ def _build_controller(
         users_service=users_service,
         verification_repository=EmailVerificationRepository(db),
         compliance_review=compliance_review,
+        dmc_admin=build_admin_service(db, redis_client),
     )
     return AdminController(service)
 
@@ -289,9 +291,11 @@ async def get_user_profile(
     summary="Create a user with an arbitrary role.",
 )
 async def create_user(
-    payload: AdminRegisterRequest, controller: ControllerDep
+    payload: AdminRegisterRequest,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
 ) -> RegisterResponse:
-    return await controller.create_user(payload)
+    return await controller.create_user(payload, actor_firebase_uid=current_user.uid)
 
 
 @router.patch(
@@ -300,9 +304,14 @@ async def create_user(
     summary="Update a user (role, status, profile).",
 )
 async def update_user(
-    user_id: UUID, payload: AdminUserUpdate, controller: ControllerDep
+    user_id: UUID,
+    payload: AdminUserUpdate,
+    controller: ControllerDep,
+    current_user: CurrentUserDep,
 ) -> MeResponse:
-    return await controller.update_user(user_id, payload)
+    return await controller.update_user(
+        user_id, payload, actor_firebase_uid=current_user.uid
+    )
 
 
 @router.delete(

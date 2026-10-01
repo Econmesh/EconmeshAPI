@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -47,6 +48,8 @@ from src.shared.utils.time import utcnow
 if TYPE_CHECKING:
     from src.infrastructure.realtime.presence import PresenceService
     from src.modules.auth.repository import AuthRepository
+
+OnDmcTicket = Callable[[SupportTicketDocument], Awaitable[SupportTicketDocument | None]]
 
 
 def _message_to_response(
@@ -122,6 +125,7 @@ class SupportService:
         realtime: SupportRealtimePublisher | None,
         notifications: SupportNotificationService,
         presence: PresenceService,
+        on_dmc_ticket: OnDmcTicket | None = None,
     ) -> None:
         self._tickets = tickets_repo
         self._messages = messages_repo
@@ -129,6 +133,7 @@ class SupportService:
         self._realtime = realtime
         self._notifications = notifications
         self._presence = presence
+        self._on_dmc_ticket = on_dmc_ticket
 
     async def _resolve_user_id(self, firebase_uid: str) -> UUID:
         user = await self._auth.get_by_firebase_uid(firebase_uid)
@@ -161,7 +166,9 @@ class SupportService:
         self, doc: SupportTicketDocument
     ) -> SupportTicketResponse:
         names = await self._admin_names(
-            doc.assigned_admin_id, doc.last_responder_admin_id
+            doc.assigned_admin_id,
+            doc.last_responder_admin_id,
+            doc.assigned_agent_id,
         )
         return SupportTicketResponse(
             id=doc.id,
@@ -181,6 +188,10 @@ class SupportService:
             assigned_admin_id=doc.assigned_admin_id,
             assigned_admin_name=(
                 names.get(doc.assigned_admin_id) if doc.assigned_admin_id else None
+            ),
+            assigned_agent_id=doc.assigned_agent_id,
+            assigned_agent_name=(
+                names.get(doc.assigned_agent_id) if doc.assigned_agent_id else None
             ),
             closed_by=doc.closed_by,
             closed_at=doc.closed_at,
@@ -398,7 +409,70 @@ class SupportService:
             visitor_email=str(payload.email),
             interest_label=_CONTACT_INTEREST_LABELS[payload.interest],
         )
+        ticket = await self._dispatch_dmc_ticket(ticket)
         return await self._ticket_response(ticket)
+
+    async def create_authenticated_dmc_request(
+        self,
+        *,
+        firebase_uid: str,
+        message: str,
+        company_name: str | None,
+        company_id: UUID | None,
+        phone: str | None,
+        position: str | None,
+    ) -> SupportTicketResponse:
+        """Open a DMC contact request for a signed-in company user."""
+        user = await self._auth.get_by_firebase_uid(firebase_uid)
+        if user is None:
+            raise NotFoundError("User not found.")
+        now = utcnow()
+        ticket_number = await self._tickets.next_contact_request_ticket_number()
+        subject = _subject_from_message(message)
+        body = message.strip()
+        ticket = SupportTicketDocument(
+            source=SupportTicketSource.CONTACT_REQUEST,
+            user_id=user.id,
+            company_id=company_id,
+            visitor_email=str(user.email) if user.email else None,
+            visitor_name=user.name,
+            company=company_name,
+            position=position,
+            phone=phone or user.phone,
+            interest=SupportContactInterest.DMC,
+            ticket_number=ticket_number,
+            subject=subject,
+            status=SupportTicketStatus.OPEN,
+            last_message_at=now,
+        )
+        await self._tickets.create(ticket)
+        author_message = SupportMessageDocument(
+            ticket_id=ticket.id,
+            author_id=user.id,
+            author_role=SupportAuthorRole.USER,
+            message_type=SupportMessageType.USER_MESSAGE,
+            body=body,
+        )
+        await self._messages.create(author_message)
+        await self._notifications.notify_admins_contact_request(
+            ticket,
+            visitor_name=user.name or str(user.email or "Usuário"),
+            visitor_email=str(user.email or ""),
+            interest_label=_CONTACT_INTEREST_LABELS[SupportContactInterest.DMC],
+        )
+        ticket = await self._dispatch_dmc_ticket(ticket)
+        return await self._ticket_response(ticket)
+
+    async def _dispatch_dmc_ticket(
+        self, ticket: SupportTicketDocument
+    ) -> SupportTicketDocument:
+        if (
+            self._on_dmc_ticket is None
+            or ticket.interest != SupportContactInterest.DMC
+        ):
+            return ticket
+        updated = await self._on_dmc_ticket(ticket)
+        return updated or ticket
 
     async def list_user_tickets(
         self, params: UserSupportTicketListParams, *, firebase_uid: str

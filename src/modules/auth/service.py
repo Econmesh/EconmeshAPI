@@ -29,7 +29,7 @@ from src.modules.auth.schema import (
 from src.modules.companies.model import CompanyAddress, CompanyDocument
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.users.repository import UsersRepository
-from src.shared.constants.roles import DEFAULT_ROLE, Role
+from src.shared.constants.roles import DEFAULT_ROLE, PANEL_ROLES, Role
 from src.shared.schemas.responses import MessageResponse
 from src.shared.utils.compliance_upload import upload_compliance_file
 from src.shared.utils.time import utcnow
@@ -338,9 +338,9 @@ class AuthService:
         )
 
     async def admin_login_with_id_token(self, id_token: str) -> LoginResponse:
-        """Admin-panel login — same as public login but requires ``role=admin``."""
+        """Panel login — administrators and DMC agents."""
         response = await self.login_with_id_token(id_token)
-        if response.user.role != Role.ADMIN:
+        if response.user.role not in PANEL_ROLES:
             raise ForbiddenError("Admin access required.", code="admin_required")
         return response
 

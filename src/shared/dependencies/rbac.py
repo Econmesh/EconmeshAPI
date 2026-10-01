@@ -14,6 +14,7 @@ from typing import Annotated, Any
 from fastapi import Depends
 
 from src.core.exceptions import ForbiddenError
+from src.shared.constants.permissions import Permission, role_has_permission
 from src.shared.constants.roles import Role
 from src.shared.dependencies.auth import CurrentUser, get_current_user
 
@@ -68,4 +69,43 @@ def require_scopes(
     return _dependency
 
 
-__all__ = ["require_role", "require_scopes"]
+def require_permission(
+    permission: Permission,
+) -> Callable[[CurrentUser], Coroutine[Any, Any, CurrentUser]]:
+    """Build a dependency that enforces a static role permission."""
+
+    async def _dependency(
+        user: Annotated[CurrentUser, Depends(get_current_user)],
+    ) -> CurrentUser:
+        if not role_has_permission(user.role, permission):
+            raise ForbiddenError(
+                "You do not have permission for this resource.",
+                code="permission_required",
+                details={"required_permission": permission.value},
+            )
+        return user
+
+    return _dependency
+
+
+def reject_roles(
+    *denied: Role,
+) -> Callable[[CurrentUser], Coroutine[Any, Any, CurrentUser]]:
+    """Build a dependency that blocks specific roles even on otherwise open routes."""
+    denied_set: frozenset[Role] = frozenset(denied)
+
+    async def _dependency(
+        user: Annotated[CurrentUser, Depends(get_current_user)],
+    ) -> CurrentUser:
+        if user.role in denied_set:
+            raise ForbiddenError(
+                f"Role '{user.role}' is not allowed for this resource.",
+                code="permission_required",
+                details={"denied_roles": sorted(r.value for r in denied_set)},
+            )
+        return user
+
+    return _dependency
+
+
+__all__ = ["reject_roles", "require_permission", "require_role", "require_scopes"]

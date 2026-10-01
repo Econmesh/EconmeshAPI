@@ -263,6 +263,26 @@ class SupportNotificationService:
                 action_url=admin_url,
             )
 
+    async def notify_dmc_agent_assigned(
+        self, ticket: SupportTicketDocument, agent: UserDocument
+    ) -> None:
+        label = _format_ticket_label(ticket)
+        title = f"Solicitação DMC atribuída {label}"
+        company = ticket.company or "empresa"
+        body = f"{ticket.subject} — {company}"
+        admin_url = (
+            f"{self._settings.FRONTEND_ADMIN_URL.rstrip('/')}"
+            f"/dashboard/suporte/{ticket.id}"
+        )
+        await self._notify_admin_in_app_and_email(
+            agent,
+            title=title,
+            body=body,
+            ticket=ticket,
+            event="dmc_ticket_assigned",
+            action_url=admin_url,
+        )
+
     async def notify_user_admin_reply(
         self, ticket: SupportTicketDocument, user: UserDocument, *, preview: str
     ) -> None:

@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from src.modules.platform_settings.model import ForoFillMode
+from src.modules.platform_settings.model import DmcAssignmentMode, ForoFillMode
 from src.shared.schemas.base import APIModel
 
 
@@ -16,6 +16,7 @@ class PlatformSettingsUpdate(APIModel):
     foro_fill_mode: ForoFillMode | None = None
     foro_city: str | None = Field(default=None, max_length=120)
     foro_state: str | None = Field(default=None, max_length=2)
+    dmc_assignment_mode: DmcAssignmentMode | None = None
 
 
 class PlatformSettingsResponse(APIModel):
@@ -24,6 +25,7 @@ class PlatformSettingsResponse(APIModel):
     foro_fill_mode: ForoFillMode = ForoFillMode.COMPANY
     foro_city: str | None = None
     foro_state: str | None = None
+    dmc_assignment_mode: DmcAssignmentMode = DmcAssignmentMode.MANUAL
     updated_at: datetime
 
 

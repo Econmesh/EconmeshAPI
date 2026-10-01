@@ -9,6 +9,7 @@ from uuid import UUID
 from pymongo import ASCENDING, DESCENDING, ReturnDocument
 
 from src.modules.support.model import (
+    SupportContactInterest,
     SupportMessageDocument,
     SupportMessageType,
     SupportTicketDocument,
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
 _USER_VISIBLE_TYPES = [
     SupportMessageType.USER_MESSAGE.value,
     SupportMessageType.ADMIN_REPLY.value,
+    SupportMessageType.AGENT_REPLY.value,
 ]
 
 _INTERNAL_SOURCE_QUERY: dict[str, Any] = {
@@ -90,6 +92,14 @@ class SupportTicketsRepository:
         )
         await self._collection.create_index(
             [("assigned_admin_id", ASCENDING)], name="ix_assigned_admin"
+        )
+        await self._collection.create_index(
+            [
+                ("assigned_agent_id", ASCENDING),
+                ("interest", ASCENDING),
+                ("status", ASCENDING),
+            ],
+            name="ix_assigned_agent_interest_status",
         )
         await self._collection.create_index(
             [("last_message_at", DESCENDING)], name="ix_last_message_at"
@@ -225,12 +235,76 @@ class SupportTicketsRepository:
                 query.update(_INTERNAL_SOURCE_QUERY)
             else:
                 query["source"] = params.source
+        if params.interest is not None:
+            query["interest"] = params.interest
         if params.q:
             escaped = re.escape(params.q.strip())
             if escaped.isdigit():
                 query["ticket_number"] = int(escaped)
             else:
                 query["subject"] = {"$regex": escaped, "$options": "i"}
+        return query
+
+    async def list_for_agent(
+        self,
+        agent_user_id: UUID,
+        *,
+        skip: int,
+        limit: int,
+        status: SupportTicketStatus | None = None,
+    ) -> list[SupportTicketDocument]:
+        query = self._agent_query(agent_user_id, status=status)
+        cursor = (
+            self._collection.find(query)
+            .sort("last_message_at", DESCENDING)
+            .skip(skip)
+            .limit(limit)
+        )
+        docs = await cursor.to_list(length=limit)
+        return [SupportTicketDocument.model_validate(d) for d in docs]
+
+    async def count_for_agent(
+        self,
+        agent_user_id: UUID,
+        *,
+        status: SupportTicketStatus | None = None,
+        statuses: list[SupportTicketStatus] | None = None,
+    ) -> int:
+        query = self._agent_query(agent_user_id, status=status, statuses=statuses)
+        return await self._collection.count_documents(query)
+
+    async def list_recent_for_agent(
+        self, agent_user_id: UUID, *, limit: int = 5
+    ) -> list[SupportTicketDocument]:
+        query = self._agent_query(agent_user_id)
+        cursor = (
+            self._collection.find(query)
+            .sort("last_message_at", DESCENDING)
+            .limit(limit)
+        )
+        docs = await cursor.to_list(length=limit)
+        return [SupportTicketDocument.model_validate(d) for d in docs]
+
+    @staticmethod
+    def _agent_query(
+        agent_user_id: UUID,
+        *,
+        status: SupportTicketStatus | None = None,
+        statuses: list[SupportTicketStatus] | None = None,
+    ) -> dict[str, Any]:
+        query: dict[str, Any] = {
+            "assigned_agent_id": agent_user_id,
+            "interest": SupportContactInterest.DMC.value,
+        }
+        if status is not None:
+            query["status"] = status.value if isinstance(status, SupportTicketStatus) else status
+        elif statuses:
+            query["status"] = {
+                "$in": [
+                    item.value if isinstance(item, SupportTicketStatus) else item
+                    for item in statuses
+                ]
+            }
         return query
 
 

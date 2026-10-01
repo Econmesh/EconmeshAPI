@@ -55,6 +55,7 @@ class PlatformSettingsService:
             foro_fill_mode=settings.foro_fill_mode,
             foro_city=settings.foro_city,
             foro_state=settings.foro_state,
+            dmc_assignment_mode=settings.dmc_assignment_mode,
             updated_at=settings.updated_at,
         )
 

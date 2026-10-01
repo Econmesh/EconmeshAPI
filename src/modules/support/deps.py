@@ -37,6 +37,9 @@ def build_support_service(db: AsyncDatabase, redis_client: Redis) -> SupportServ
         presence=presence,
         settings=get_settings(),
     )
+    from src.modules.dmc.deps import build_assignment_service
+
+    assignment = build_assignment_service(db, redis_client)
     return SupportService(
         tickets_repo=tickets_repo,
         messages_repo=messages_repo,
@@ -44,6 +47,7 @@ def build_support_service(db: AsyncDatabase, redis_client: Redis) -> SupportServ
         realtime=support_realtime,
         notifications=notifications,
         presence=presence,
+        on_dmc_ticket=assignment.handle_new_ticket,
     )
 
 
