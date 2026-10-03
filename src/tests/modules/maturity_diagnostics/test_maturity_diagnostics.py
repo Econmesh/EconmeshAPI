@@ -16,9 +16,11 @@ from src.modules.dmc.model import DmcPortfolioLinkDocument, PortfolioSource
 from src.modules.dmc.scope import PortfolioScope
 from src.modules.maturity_diagnostics.catalog import (
     CATALOG,
+    PILLAR_CL,
     PILLAR_FM,
     PILLAR_PS,
     STEP_MATERIAL_FLOWS,
+    STEP_SYMBIOSIS,
     StepAvailability,
 )
 from src.modules.maturity_diagnostics.engine import (
@@ -67,13 +69,25 @@ AXIS1_ANSWERS = {
     "q37": "entre_2_5",
     "q43": "planilhas",
 }
+AXIS2_ANSWERS = {
+    "ps_q25": "coprocessamento_reciclagem",
+    "ps_q26": "nao",
+    "ps_q28": "media",
+    "ps_q29": "sim",
+    "ps_q30": ["energia"],
+    "ps_q31": "talvez",
+    "ps_q32": ["vender_residuos", "simbiose_industrial"],
+    "ps_q33": "nao",
+}
+ALL_ANSWERS = {**IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS, **AXIS2_ANSWERS}
 
 
 # ------------------------------------------------------------------- catálogo
 def test_catalog_keeps_future_axes_in_maintenance_without_questions() -> None:
     steps = {s.id: s for s in CATALOG.steps}
     assert [s.order for s in CATALOG.steps] == [1, 2, 3, 4, 5]
-    for step_id in ("axis_2_symbiosis", "axis_3_esg", "axis_4_economic"):
+    assert steps[STEP_SYMBIOSIS].availability is StepAvailability.AVAILABLE
+    for step_id in ("axis_3_esg", "axis_4_economic"):
         assert steps[step_id].availability is StepAvailability.MAINTENANCE
         assert CATALOG.questions_for_step(step_id) == []
 
@@ -97,6 +111,44 @@ def test_axis_1_numbering_and_grouping() -> None:
     assert axis_sections == ["fm_production", "fm_waste", "fm_data"]
 
 
+def test_axis_2_questions_match_specification() -> None:
+    axis2 = CATALOG.questions_for_step(STEP_SYMBIOSIS)
+    assert [q.code for q in axis2] == [f"2.{i}" for i in range(1, 11)]
+    assert [q.number for q in axis2] == list(range(25, 35))
+    scored = {q.id: q for q in axis2 if q.scored}
+    assert set(scored) == {"ps_q25", "ps_q28"}
+    q25, q28 = scored["ps_q25"], scored["ps_q28"]
+    # Q25: aparece no Eixo 2, pontua no Pilar 3 (CL)
+    assert {o.label: o.points for o in q25.options} == {
+        "Coprocessamento/Reciclagem": 15,
+        "Aterro/Pátio": 5,
+    }
+    assert (q25.pillar_id, q25.pillar_weight, q25.ems_weight) == (PILLAR_CL, 15, 3.75)
+    assert {o.label: o.points for o in q28.options} == {"Alta": 60, "Média": 30, "Baixa": 0}
+    assert (q28.pillar_id, q28.pillar_weight, q28.ems_weight) == (PILLAR_PS, 60, 15)
+    q30 = next(q for q in axis2 if q.id == "ps_q30")
+    q32 = next(q for q in axis2 if q.id == "ps_q32")
+    assert [o.label for o in q30.options] == [
+        "Equipamentos", "Armazenamento", "Transporte", "Energia", "Serviços técnicos",
+    ]
+    assert [o.label for o in q32.options] == [
+        "Vender resíduos", "Comprar insumos", "Simbiose Industrial",
+        "Compartilhar infraestrutura", "Receber diagnóstico",
+    ]
+    assert next(q for q in axis2 if q.id == "ps_q34").required is False
+    pillars = {p.id: p for p in CATALOG.pillars}
+    assert pillars[PILLAR_PS].ems_weight == 25
+    assert pillars[PILLAR_CL].ems_weight == 25
+
+
+def test_axis_2_conditionals() -> None:
+    ids = lambda values: {q.id for q in visible_questions(CATALOG, values)}  # noqa: E731
+    assert "ps_q27" not in ids({"ps_q26": "nao"})
+    assert "ps_q27" in ids({"ps_q26": "sim"})
+    assert "ps_q30" not in ids({"ps_q29": "nao"})
+    assert "ps_q30" in ids({"ps_q29": "sim"})
+
+
 def test_q31_is_shown_in_axis_1_but_scored_in_symbiosis_pillar() -> None:
     q31 = CATALOG.question("q31")
     assert q31 is not None
@@ -113,7 +165,9 @@ def test_scored_questions_match_specification() -> None:
         "q37": ({"menos_2": 10, "entre_2_5": 5, "acima_5": 0}, PILLAR_FM, 10, 3),
         "q43": ({"erp": 10, "planilhas": 5, "fisico": 0}, PILLAR_FM, 10, 3),
     }
-    scored = {q.id: q for q in CATALOG.questions if q.scored}
+    scored = {
+        q.id: q for q in CATALOG.questions if q.scored and q.step_id == STEP_MATERIAL_FLOWS
+    }
     assert set(scored) == set(expected)
     for qid, (points, pillar, pillar_weight, ems_weight) in expected.items():
         question = scored[qid]
@@ -141,7 +195,7 @@ def test_conditional_questions() -> None:
 
 
 def test_hidden_answers_do_not_count_or_block_completion() -> None:
-    values = {**IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS, "q12": "resposta antiga"}
+    values = {**ALL_ANSWERS, "q12": "resposta antiga"}
     evaluation = evaluate(CATALOG, values)
     assert evaluation.complete is True
     assert evaluation.progress == 100
@@ -151,7 +205,7 @@ def test_hidden_answers_do_not_count_or_block_completion() -> None:
 
 
 def test_showing_conditional_question_makes_it_required() -> None:
-    values = {**IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS, "q17": "sim"}
+    values = {**ALL_ANSWERS, "q17": "sim"}
     evaluation = evaluate(CATALOG, values)
     axis1 = next(s for s in evaluation.steps if s.step_id == STEP_MATERIAL_FLOWS)
     assert axis1.missing_required == ["q18"]
@@ -161,22 +215,26 @@ def test_showing_conditional_question_makes_it_required() -> None:
 
 # ------------------------------------------------------------------ pontuação
 def test_scoring_by_pillar_and_ems() -> None:
-    evaluation = evaluate(CATALOG, {**IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS})
+    evaluation = evaluate(CATALOG, ALL_ANSWERS)
     pillars = {p.pillar_id: p for p in evaluation.pillars}
     # FM: 40 (excelente) + 25 (IIA) + 5 (2–5%) + 5 (planilhas)
     assert (pillars[PILLAR_FM].points, pillars[PILLAR_FM].max_points) == (75, 100)
-    # PS: Q31 sazonal = 15 de 40 (perguntas dos demais eixos ainda não existem)
-    assert (pillars[PILLAR_PS].points, pillars[PILLAR_PS].max_points) == (15, 40)
-    # EMS: 12 + 12*25/40 + 10*15/40 + 3*5/10 + 3*5/10
-    assert evaluation.ems.points == pytest.approx(12 + 7.5 + 3.75 + 1.5 + 1.5)
-    assert evaluation.ems.max_available == 40
+    # PS: Q31 (Eixo 1) sazonal 15 + Q28 (Eixo 2) média 30 — pilar completo (40% + 60%)
+    assert (pillars[PILLAR_PS].points, pillars[PILLAR_PS].max_points) == (45, 100)
+    # CL: Q25 coprocessamento/reciclagem = 15 de 15
+    assert (pillars[PILLAR_CL].points, pillars[PILLAR_CL].max_points) == (15, 15)
+    # EMS: Eixo 1 (12 + 7.5 + 3.75 + 1.5 + 1.5) + Q25 3.75 + Q28 15*30/60
+    assert evaluation.ems.points == pytest.approx(26.25 + 3.75 + 7.5)
+    assert evaluation.ems.max_available == pytest.approx(40 + 3.75 + 15)
 
 
 def test_maintenance_steps_do_not_affect_progress() -> None:
     evaluation = evaluate(CATALOG, {})
     statuses = {s.step_id: s.status for s in evaluation.steps}
-    assert statuses["axis_2_symbiosis"] is StepStatus.MAINTENANCE
-    assert evaluation.required_total == 8 + 14
+    assert statuses["axis_2_symbiosis"] is StepStatus.NOT_STARTED
+    assert statuses["axis_3_esg"] is StepStatus.MAINTENANCE
+    # Eixo 2: 7 obrigatórias visíveis (2.3 e 2.6 condicionais, 2.10 opcional)
+    assert evaluation.required_total == 8 + 14 + 7
 
 
 # ------------------------------------------------------------------- validação
@@ -369,7 +427,7 @@ async def test_complete_requires_all_available_steps() -> None:
         await service.complete("agent-uid", incomplete.id)
     assert exc.value.code == "diagnostic_incomplete"
 
-    complete = _open_diagnostic(company, agent, **IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS)
+    complete = _open_diagnostic(company, agent, **ALL_ANSWERS)
     repo.get = AsyncMock(return_value=complete)
     repo.update = AsyncMock(
         side_effect=lambda _id, patch: complete.model_copy(
@@ -380,7 +438,7 @@ async def test_complete_requires_all_available_steps() -> None:
     patch = repo.update.await_args.args[1]
     assert patch["status"] == DiagnosticStatus.COMPLETED.value
     assert patch["is_open"] is False
-    assert patch["result"]["ems"]["points"] == pytest.approx(26.25)
+    assert patch["result"]["ems"]["points"] == pytest.approx(37.5)
     assert detail.can_edit is False
 
 
@@ -395,7 +453,7 @@ async def test_validate_step_reports_missing_required() -> None:
     assert "q04" in exc.value.details["missing"]
 
     with pytest.raises(ValidationAppError):
-        await service.validate_step("agent-uid", diagnostic.id, "axis_2_symbiosis")
+        await service.validate_step("agent-uid", diagnostic.id, "axis_3_esg")
 
 
 async def test_routes_require_dmc_agent(app: FastAPI, client: AsyncClient) -> None:
@@ -428,6 +486,31 @@ async def test_catalog_route_for_agent(app: FastAPI, client: AsyncClient) -> Non
         assert response.status_code == 200
         body = response.json()
         assert len(body["steps"]) == 5
+        assert any(q["id"] == "ps_q25" and q["pillar_id"] == "cl" for q in body["questions"])
         assert any(q["id"] == "q31" and q["pillar_id"] == "ps" for q in body["questions"])
     finally:
         app.dependency_overrides.clear()
+
+
+async def test_completed_diagnostic_keeps_snapshot_after_catalog_changes() -> None:
+    """Concluído antes do Eixo 2: relatório mantém o resultado e o eixo em manutenção."""
+    company = _company()
+    service, repo, agent = _service(company)
+    old_result = evaluate(CATALOG, ALL_ANSWERS).model_dump(mode="python")
+    old_result["steps"] = [
+        {**step, "status": "maintenance"} if step["step_id"] == STEP_SYMBIOSIS else step
+        for step in old_result["steps"]
+    ]
+    old_result["ems"] = {"points": 26.25, "max_available": 40.0}
+    done = _open_diagnostic(company, agent, **IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS)
+    done = done.model_copy(
+        update={"status": DiagnosticStatus.COMPLETED, "is_open": False, "result": old_result}
+    )
+    repo.get = AsyncMock(return_value=done)
+
+    report = await service.report("agent-uid", done.id)
+    assert report.ems.points == pytest.approx(26.25)
+    axis2 = next(step for step in report.steps if step.id == STEP_SYMBIOSIS)
+    assert axis2.availability == "maintenance"
+    detail = await service.get("agent-uid", done.id)
+    assert detail.evaluation.ems.max_available == 40

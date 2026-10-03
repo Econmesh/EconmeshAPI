@@ -121,6 +121,7 @@ class ReportStep(APIModel):
 class ReportPillar(PillarScore):
     code: str
     name: str
+    ems_weight: float | None = None
 
 
 class DiagnosticReport(APIModel):

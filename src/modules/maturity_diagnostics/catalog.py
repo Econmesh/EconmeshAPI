@@ -24,7 +24,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CATALOG_VERSION = "2026-10.2"
+CATALOG_VERSION = "2026-10.3"
 
 
 class StepKind(StrEnum):
@@ -74,6 +74,8 @@ class Pillar(_Frozen):
     id: str
     code: str
     name: str
+    #: Peso do pilar no EMS (%), quando definido.
+    ems_weight: float | None = None
 
 
 class Option(_Frozen):
@@ -181,6 +183,7 @@ STEP_ECONOMIC = "axis_4_economic"
 
 PILLAR_FM = "fm"
 PILLAR_PS = "ps"
+PILLAR_CL = "cl"
 
 _YES_NO = (Option(value="sim", label="Sim"), Option(value="nao", label="Não"))
 
@@ -213,8 +216,11 @@ _STEPS = (
         kind=StepKind.AXIS,
         title="Eixo 2 — Potencial de Simbiose",
         short_title="Potencial de Simbiose",
-        availability=StepAvailability.MAINTENANCE,
-        maintenance_message=_MAINTENANCE_MESSAGE,
+        description=(
+            "Destinação e valorização de resíduos, demanda de mercado, capacidade "
+            "ociosa compartilhável e interesse da empresa em iniciativas de simbiose "
+            "industrial."
+        ),
     ),
     Step(
         id=STEP_ESG,
@@ -255,15 +261,33 @@ _SECTIONS = (
         title="Gestão de dados",
         description="Registro e rastreabilidade das informações de geração e consumo.",
     ),
+    Section(
+        id="ps_destination_market",
+        step_id=STEP_SYMBIOSIS,
+        title="Destinação e mercado de resíduos",
+    ),
+    Section(
+        id="ps_capacity",
+        step_id=STEP_SYMBIOSIS,
+        title="Capacidade e infraestrutura compartilhável",
+    ),
+    Section(
+        id="ps_engagement",
+        step_id=STEP_SYMBIOSIS,
+        title="Interesse e engajamento",
+    ),
 )
 
 _PILLARS = (
-    Pillar(id=PILLAR_FM, code="FM", name="Pilar 1 — Fluxo de Materiais"),
-    Pillar(id=PILLAR_PS, code="PS", name="Pilar 2 — Potencial de Simbiose"),
+    # FM: 30% = soma dos pesos EMS das suas perguntas (12 + 12 + 3 + 3).
+    Pillar(id=PILLAR_FM, code="FM", name="Pilar 1 — Fluxo de Materiais", ems_weight=30),
+    Pillar(id=PILLAR_PS, code="PS", name="Pilar 2 — Potencial de Simbiose", ems_weight=25),
+    Pillar(id=PILLAR_CL, code="CL", name="Pilar 3 — CL", ems_weight=25),
 )
 
 _ID = STEP_IDENTIFICATION
 _FM = STEP_MATERIAL_FLOWS
+_PS = STEP_SYMBIOSIS
 
 _QUESTIONS = (
     # ---------------------------------------------------------- Identificação
@@ -473,6 +497,105 @@ _QUESTIONS = (
         ),
         scored=True, pillar_id=PILLAR_FM, pillar_weight=10, ems_weight=3,
         objective="Avaliar maturidade da gestão de dados e capacidade de rastreabilidade.",
+    ),
+    # ----------------------- Eixo 2 — 1. Destinação e mercado de resíduos
+    Question(
+        id="ps_q25", code="2.1", number=25, step_id=_PS, section_id="ps_destination_market",
+        label="Qual o modelo predominante de rastreabilidade e destinação final adotado?",
+        type=QuestionType.SINGLE_CHOICE,
+        options=(
+            Option(value="coprocessamento_reciclagem", label="Coprocessamento/Reciclagem",
+                   points=15),
+            Option(value="aterro_patio", label="Aterro/Pátio", points=5),
+        ),
+        # Aparece no Eixo 2, mas é contabilizada no Pilar 3 (CL).
+        scored=True, pillar_id=PILLAR_CL, pillar_weight=15, ems_weight=3.75,
+        objective=(
+            "Modelo de destinação é critério de conformidade regulatória."
+        ),
+    ),
+    Question(
+        id="ps_q26", code="2.2", number=26, step_id=_PS, section_id="ps_destination_market",
+        label="Algum resíduo gera receita para a empresa?",
+        type=QuestionType.SINGLE_CHOICE, options=_YES_NO,
+    ),
+    Question(
+        id="ps_q27", code="2.3", number=27, step_id=_PS, section_id="ps_destination_market",
+        label="Qual resíduo gera receita e como ocorre a comercialização?",
+        type=QuestionType.LONG_TEXT,
+        show_if=(
+            Condition(question_id="ps_q26", operator=ConditionOperator.IN, values=("sim",)),
+        ),
+    ),
+    Question(
+        id="ps_q28", code="2.4", number=28, step_id=_PS, section_id="ps_destination_market",
+        label=(
+            "Qual a percepção de mercado ou demanda regional para o subproduto no Nordeste?"
+        ),
+        type=QuestionType.SINGLE_CHOICE,
+        options=(
+            Option(value="alta", label="Alta", points=60),
+            Option(value="media", label="Média", points=30),
+            Option(value="baixa", label="Baixa", points=0),
+        ),
+        scored=True, pillar_id=PILLAR_PS, pillar_weight=60, ems_weight=15,
+        objective="Liquidez de mercado: alta demanda indica múltiplos compradores no Nordeste.",
+    ),
+    # ------------------ Eixo 2 — 2. Capacidade e infraestrutura compartilhável
+    Question(
+        id="ps_q29", code="2.5", number=29, step_id=_PS, section_id="ps_capacity",
+        label="A empresa possui capacidade produtiva ou infraestrutura subutilizada?",
+        type=QuestionType.SINGLE_CHOICE, options=_YES_NO,
+    ),
+    Question(
+        id="ps_q30", code="2.6", number=30, step_id=_PS, section_id="ps_capacity",
+        label="Quais áreas possuem capacidade ociosa?",
+        type=QuestionType.MULTI_CHOICE,
+        help_text="Selecione todas as opções aplicáveis.",
+        options=(
+            Option(value="equipamentos", label="Equipamentos"),
+            Option(value="armazenamento", label="Armazenamento"),
+            Option(value="transporte", label="Transporte"),
+            Option(value="energia", label="Energia"),
+            Option(value="servicos_tecnicos", label="Serviços técnicos"),
+        ),
+        show_if=(
+            Condition(question_id="ps_q29", operator=ConditionOperator.IN, values=("sim",)),
+        ),
+    ),
+    Question(
+        id="ps_q31", code="2.7", number=31, step_id=_PS, section_id="ps_capacity",
+        label="Haveria interesse em compartilhar essa estrutura com outras empresas?",
+        type=QuestionType.SINGLE_CHOICE,
+        options=(
+            Option(value="sim", label="Sim"),
+            Option(value="nao", label="Não"),
+            Option(value="talvez", label="Talvez"),
+        ),
+    ),
+    # ------------------------------- Eixo 2 — 3. Interesse e engajamento
+    Question(
+        id="ps_q32", code="2.8", number=32, step_id=_PS, section_id="ps_engagement",
+        label="A empresa teria interesse em:",
+        type=QuestionType.MULTI_CHOICE,
+        help_text="Selecione todas as opções aplicáveis.",
+        options=(
+            Option(value="vender_residuos", label="Vender resíduos"),
+            Option(value="comprar_insumos", label="Comprar insumos"),
+            Option(value="simbiose_industrial", label="Simbiose Industrial"),
+            Option(value="compartilhar_infraestrutura", label="Compartilhar infraestrutura"),
+            Option(value="receber_diagnostico", label="Receber diagnóstico"),
+        ),
+    ),
+    Question(
+        id="ps_q33", code="2.9", number=33, step_id=_PS, section_id="ps_engagement",
+        label="Já participou de iniciativa de economia circular?",
+        type=QuestionType.SINGLE_CHOICE, options=_YES_NO,
+    ),
+    Question(
+        id="ps_q34", code="2.10", number=34, step_id=_PS, section_id="ps_engagement",
+        label="Observações adicionais ou oportunidades percebidas",
+        type=QuestionType.LONG_TEXT, required=False,
     ),
 )
 

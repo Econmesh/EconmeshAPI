@@ -31,6 +31,7 @@ from src.modules.maturity_diagnostics.engine import (
     AnswerValue,
     Evaluation,
     InvalidAnswerError,
+    StepStatus,
     evaluate,
     normalize_answer,
     score_for,
@@ -428,9 +429,15 @@ class MaturityDiagnosticsService:
                 "The report is available after the diagnostic is completed.",
                 code="diagnostic_not_completed",
             )
-        values = diagnostic.answer_values()
-        evaluation = evaluate(self._catalog, values)
+        evaluation = self._evaluation_for(diagnostic)
         visible = set(evaluation.visible_question_ids)
+        # Etapas que estavam em manutenção quando o diagnóstico foi concluído
+        # continuam assim no relatório, mesmo que tenham sido ativadas depois.
+        maintenance_at_completion = {
+            progress.step_id
+            for progress in evaluation.steps
+            if progress.status is StepStatus.MAINTENANCE
+        }
         steps: list[ReportStep] = []
         for step in sorted(self._catalog.steps, key=lambda s: s.order):
             sections: list[ReportSection] = []
@@ -445,7 +452,11 @@ class MaturityDiagnosticsService:
                 ReportStep(
                     id=step.id,
                     title=step.title,
-                    availability=step.availability.value,
+                    availability=(
+                        StepAvailability.MAINTENANCE.value
+                        if step.id in maintenance_at_completion
+                        else step.availability.value
+                    ),
                     sections=sections,
                 )
             )
@@ -455,6 +466,7 @@ class MaturityDiagnosticsService:
                 **score.model_dump(),
                 code=pillar_meta[score.pillar_id].code,
                 name=pillar_meta[score.pillar_id].name,
+                ems_weight=pillar_meta[score.pillar_id].ems_weight,
             )
             for score in evaluation.pillars
         ]
@@ -470,6 +482,12 @@ class MaturityDiagnosticsService:
         )
 
     # --------------------------------------------------------------- helpers
+    def _evaluation_for(self, diagnostic: MaturityDiagnosticDocument) -> Evaluation:
+        """Concluído: resultado congelado (versão do catálogo da época). Aberto: ao vivo."""
+        if not diagnostic.is_open and diagnostic.result:
+            return Evaluation.model_validate(diagnostic.result)
+        return evaluate(self._catalog, diagnostic.answer_values())
+
     def _next_available_step(self, step_id: str) -> str | None:
         ordered = sorted(self._catalog.available_steps(), key=lambda s: s.order)
         ids = [s.id for s in ordered]
@@ -513,7 +531,7 @@ class MaturityDiagnosticsService:
         company: CompanyDocument,
         agent: UserDocument,
     ) -> DiagnosticDetail:
-        evaluation: Evaluation = evaluate(self._catalog, diagnostic.answer_values())
+        evaluation = self._evaluation_for(diagnostic)
         summary = self._summary(diagnostic, company)
         return DiagnosticDetail(
             **summary.model_dump(),
