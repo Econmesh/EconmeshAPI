@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -9,7 +10,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
 
-from src.core.exceptions import ConflictError, ForbiddenError, ValidationAppError
+from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationAppError
 from src.modules.auth.model import UserDocument
 from src.modules.companies.model import CompanyAddress, CompanyDocument
 from src.modules.dmc.model import DmcPortfolioLinkDocument, PortfolioSource
@@ -39,6 +40,8 @@ from src.modules.maturity_diagnostics.model import (
     MaturityDiagnosticDocument,
     ResponseSource,
 )
+from src.modules.maturity_diagnostics.report_pdf import render_report_pdf, report_filename
+from src.modules.maturity_diagnostics.report_service import DiagnosticReportService
 from src.modules.maturity_diagnostics.schema import AnswerInput, SaveResponsesRequest
 from src.modules.maturity_diagnostics.service import MaturityDiagnosticsService
 from src.shared.constants.permissions import Permission, role_has_permission
@@ -605,25 +608,203 @@ async def test_catalog_route_for_agent(app: FastAPI, client: AsyncClient) -> Non
         app.dependency_overrides.clear()
 
 
+def _completed_before_axes_2_to_4(company, agent):
+    """Diagnóstico concluído quando só Identificação e Eixo 1 existiam."""
+    old_result = evaluate(
+        CATALOG,
+        {**IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS},
+        available_step_ids={"identification", STEP_MATERIAL_FLOWS},
+    ).model_dump(mode="python")
+    done = _open_diagnostic(company, agent, **IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS)
+    return done.model_copy(
+        update={
+            "status": DiagnosticStatus.COMPLETED,
+            "is_open": False,
+            "result": old_result,
+            "completed_at": datetime(2026, 10, 3, 17, 30, tzinfo=UTC),
+        }
+    )
+
+
 async def test_completed_diagnostic_keeps_snapshot_after_catalog_changes() -> None:
-    """Concluído antes do Eixo 2: relatório mantém o resultado e o eixo em manutenção."""
+    """Eixos ativados depois aparecem em manutenção no relatório e na consulta."""
     company = _company()
     service, repo, agent = _service(company)
-    old_result = evaluate(CATALOG, ALL_ANSWERS).model_dump(mode="python")
-    old_result["steps"] = [
-        {**step, "status": "maintenance"} if step["step_id"] == STEP_SYMBIOSIS else step
-        for step in old_result["steps"]
-    ]
-    old_result["ems"] = {"points": 26.25, "max_available": 40.0}
-    done = _open_diagnostic(company, agent, **IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS)
-    done = done.model_copy(
-        update={"status": DiagnosticStatus.COMPLETED, "is_open": False, "result": old_result}
-    )
+    done = _completed_before_axes_2_to_4(company, agent)
     repo.get = AsyncMock(return_value=done)
+    repo.update = AsyncMock(return_value=done)
 
-    report = await service.report("agent-uid", done.id)
-    assert report.ems.points == pytest.approx(26.25)
-    axis2 = next(step for step in report.steps if step.id == STEP_SYMBIOSIS)
-    assert axis2.availability == "maintenance"
+    report, created = await service.generate_report("agent-uid", done.id)
+    assert created is True
+    assert report.summary.overall_score == pytest.approx(26.25)
+    assert report.summary.overall_max == pytest.approx(40)
+    assert report.summary.partial is True
+    statuses = {axis.step_id: axis.status for axis in report.axes}
+    assert statuses[STEP_MATERIAL_FLOWS] == "evaluated"
+    assert statuses[STEP_SYMBIOSIS] == "maintenance"
+    assert statuses[STEP_ESG] == statuses[STEP_ECONOMIC] == "maintenance"
+    assert report.scope.complete is False
+    assert len(report.scope.pending_axes) == 3
+    # Persistido no diagnóstico
+    patch = repo.update.await_args.args[1]
+    assert patch["report"]["summary"]["overall_score"] == pytest.approx(26.25)
+    assert "report_generated_at" in patch
     detail = await service.get("agent-uid", done.id)
     assert detail.evaluation.ems.max_available == 40
+
+
+async def test_report_is_reused_and_requires_generation() -> None:
+    company = _company()
+    service, repo, agent = _service(company)
+    done = _completed_before_axes_2_to_4(company, agent)
+    repo.get = AsyncMock(return_value=done)
+    with pytest.raises(NotFoundError) as exc:
+        await service.get_report("agent-uid", done.id)
+    assert exc.value.code == "report_not_generated"
+
+    built = DiagnosticReportService(CATALOG).build(done, agent)
+    stored = done.model_copy(update={"report": built.model_dump(mode="python")})
+    repo.get = AsyncMock(return_value=stored)
+    repo.update = AsyncMock(return_value=stored)
+    report, created = await service.generate_report("agent-uid", done.id)
+    assert created is False
+    assert report.generated_at == built.generated_at
+    assert (await service.get_report("agent-uid", done.id)).diagnostic_id == done.id
+
+
+async def test_report_requires_completed_diagnostic() -> None:
+    company = _company()
+    service, repo, agent = _service(company)
+    repo.get = AsyncMock(return_value=_open_diagnostic(company, agent, **ALL_ANSWERS))
+    with pytest.raises(ConflictError) as exc:
+        await service.generate_report("agent-uid", uuid4())
+    assert exc.value.code == "diagnostic_not_completed"
+
+
+# ------------------------------------------------------------------- relatório
+def _full_report():
+    company = _company()
+    agent = UserDocument(firebase_uid="a", email="ana@econmesh.com", name="Ana Lima")
+    responses = {
+        qid: DiagnosticResponse(value=value)  # type: ignore[arg-type]
+        for qid, value in ALL_ANSWERS.items()
+    }
+    responses["q01"] = DiagnosticResponse(
+        value="Recicla Sul Ltda", source=ResponseSource.REGISTRY, registry_value="Recicla Sul Ltda"
+    )
+    responses["q05"] = DiagnosticResponse(value="Maria", registry_value="Maria S.")
+    result = evaluate(CATALOG, ALL_ANSWERS).model_dump(mode="python")
+    diagnostic = MaturityDiagnosticDocument(
+        company_id=company.id,
+        agent_user_id=agent.id,
+        catalog_version=CATALOG.version,
+        status=DiagnosticStatus.COMPLETED,
+        is_open=False,
+        result=result,
+        responses=responses,
+        completed_at=datetime(2026, 10, 3, 17, 30, tzinfo=UTC),
+        company_snapshot={"legal_name": company.legal_name, "tax_id": company.tax_id},
+    )
+    return DiagnosticReportService(CATALOG).build(diagnostic, agent)
+
+
+def test_engine_reports_axis_and_pillar_contributions() -> None:
+    evaluation = evaluate(CATALOG, ALL_ANSWERS)
+    axes = {a.step_id: a for a in evaluation.axes}
+    assert [a.step_id for a in evaluation.axes] == [
+        STEP_MATERIAL_FLOWS, STEP_SYMBIOSIS, STEP_ESG, STEP_ECONOMIC,
+    ]
+    # Eixo 1: q28 12 + q29 7.5 + q31 3.75 + q37 1.5 + q43 1.5 de 40
+    assert axes[STEP_MATERIAL_FLOWS].ems_points == pytest.approx(26.25)
+    assert axes[STEP_MATERIAL_FLOWS].ems_max == pytest.approx(40)
+    assert axes[STEP_MATERIAL_FLOWS].percent == pytest.approx(65.6)
+    assert sum(a.ems_points for a in evaluation.axes) == pytest.approx(evaluation.ems.points)
+    pillars = {p.pillar_id: p for p in evaluation.pillars}
+    assert pillars[PILLAR_FM].ems_points == pytest.approx(22.5)
+    assert pillars[PILLAR_FM].ems_max == pytest.approx(30)
+    assert sum(p.ems_points for p in evaluation.pillars) == pytest.approx(evaluation.ems.points)
+
+
+def test_report_derives_findings_from_answers() -> None:
+    report = _full_report()
+    assert report.summary.overall_score == pytest.approx(65.75)
+    assert report.summary.partial is False
+    # Sem régua oficial: nenhum nível aplicado
+    assert report.summary.maturity_level is None
+    assert report.summary.maturity_scale_defined is False
+    assert all(axis.status == "evaluated" for axis in report.axes)
+    indicators = {i.question_id: i for i in report.indicators}
+    assert indicators["q28"].tier == "high"  # excelente 40/40
+    assert indicators["q37"].tier == "medium"  # entre 2–5% → 5/10
+    assert indicators["q31"].tier == "low"  # sazonal 15/40
+    strengths = {f.title for f in report.strengths}
+    attention = {f.title for f in report.attention_points}
+    assert "Segregação na fonte" in strengths
+    assert "Perda de matéria-prima" in attention
+    assert "Regularidade de fornecimento" in attention
+    # Custo de descarte alto é destaque (incentivo); custo baixo não vira "atenção".
+    assert "Custo de descarte e logística" in strengths
+    opportunities = [o.title for o in report.opportunities]
+    assert "Redução de perdas de matéria-prima" in opportunities
+    assert [o.number for o in report.opportunities] == list(range(1, len(opportunities) + 1))
+    # Contexto: capacidade ociosa vira oportunidade com as áreas informadas
+    sharing = next(o for o in report.opportunities if "capacidade ociosa" in o.title.lower())
+    assert "Energia" in sharing.text
+    origins = {f.question_id: f.origin for f in report.identification}
+    assert origins["q01"] == "registry"
+    assert origins["q05"] == "adjusted"
+    assert origins["q04"] == "diagnostic"
+    assert report.versions.methodology_version
+    assert len(report.methodology.axes) == 4
+    assert any("não foi aplicada" in c for c in report.conclusions)
+
+
+def test_report_flags_critical_license_alert() -> None:
+    company = _company()
+    agent = UserDocument(firebase_uid="a", email="ana@econmesh.com")
+    values = {**ALL_ANSWERS, "esg_q35": "vencida_inexistente"}
+    diagnostic = MaturityDiagnosticDocument(
+        company_id=company.id,
+        agent_user_id=agent.id,
+        catalog_version=CATALOG.version,
+        status=DiagnosticStatus.COMPLETED,
+        is_open=False,
+        result=evaluate(CATALOG, values).model_dump(mode="python"),
+        responses={k: DiagnosticResponse(value=v) for k, v in values.items()},  # type: ignore[arg-type]
+        company_snapshot={"legal_name": company.legal_name, "tax_id": company.tax_id},
+    )
+    report = DiagnosticReportService(CATALOG).build(diagnostic, agent)
+    first = report.attention_points[0]
+    assert first.severity == "critical"
+    assert first.title == "Licença de Operação"
+    assert report.opportunities[0].title == "Regularização da Licença de Operação"
+
+
+def test_report_pdf_is_rendered_with_cover_and_pagination() -> None:
+    import fitz
+
+    report = _full_report()
+    pdf = render_report_pdf(report)
+    assert pdf.startswith(b"%PDF")
+    doc = fitz.open(stream=pdf, filetype="pdf")
+    assert doc.page_count >= 8
+    cover = doc[0].get_text()
+    assert "MATURIDADE CIRCULAR" in cover
+    assert report.company.legal_name in cover
+    last = doc[-1].get_text()
+    assert f"Página {doc.page_count} de {doc.page_count}" in last
+    import unicodedata
+
+    # NFKC desfaz ligaduras tipográficas (ex.: "ﬁ") na extração de texto.
+    full_text = unicodedata.normalize("NFKC", "".join(page.get_text() for page in doc))
+    for heading in (
+        "Identificação da Empresa",
+        "Resumo Executivo",
+        "Pontos de Destaque",
+        "Oportunidades de Melhoria",
+        "Metodologia",
+        "Resumo das Respostas",
+    ):
+        assert heading in full_text
+    assert doc[0].get_images()  # logo na capa
+    assert report_filename(report).endswith(".pdf")

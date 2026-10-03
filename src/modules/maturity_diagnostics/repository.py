@@ -90,7 +90,7 @@ class MaturityDiagnosticsRepository:
         cursor = self._collection.find(
             {"company_id": {"$in": company_ids}},
             # O resumo da lista não precisa das respostas.
-            projection={"responses": 0, "result": 0},
+            projection={"responses": 0, "result": 0, "report": 0},
         ).sort("updated_at", DESCENDING)
         docs = await cursor.to_list(length=None)
         return [

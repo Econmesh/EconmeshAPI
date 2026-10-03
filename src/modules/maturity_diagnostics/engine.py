@@ -7,7 +7,7 @@ reutilizadas pelo serviço, pelo relatório e pelos testes.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from enum import StrEnum
 from typing import Any
 
@@ -18,7 +18,7 @@ from src.modules.maturity_diagnostics.catalog import (
     ConditionOperator,
     Question,
     QuestionType,
-    StepAvailability,
+    StepKind,
 )
 
 AnswerValue = str | list[str] | None
@@ -59,6 +59,28 @@ class PillarScore(BaseModel):
     percent: float | None
     answered: int
     total: int
+    #: Contribuição do pilar no EMS (pontos ponderados) e máximo possível.
+    ems_points: float = 0.0
+    ems_max: float = 0.0
+
+
+class AxisStatus(StrEnum):
+    EVALUATED = "evaluated"
+    MAINTENANCE = "maintenance"
+
+
+class AxisScore(BaseModel):
+    """Resultado por eixo do formulário (perguntas pontuadas localizadas no eixo)."""
+
+    step_id: str
+    status: AxisStatus
+    points: int = 0
+    max_points: int = 0
+    ems_points: float = 0.0
+    ems_max: float = 0.0
+    #: Percentual ponderado pelos pesos no EMS (0–100); ``None`` se não avaliado.
+    percent: float | None = None
+    scored_questions: int = 0
 
 
 class EmsScore(BaseModel):
@@ -85,6 +107,7 @@ class Evaluation(BaseModel):
     visible_question_ids: list[str]
     #: Alertas disparados pelas respostas (ex.: LO vencida = risco crítico).
     alerts: list[Alert] = []
+    axes: list[AxisScore] = []
 
 
 # --------------------------------------------------------------- visibilidade
@@ -167,6 +190,22 @@ def normalize_answer(question: Question, raw: Any) -> AnswerValue:
     return value
 
 
+def display_answer(question: Question, value: AnswerValue) -> str | None:
+    """Valor legível de uma resposta (rótulos das opções)."""
+    if value is None or (isinstance(value, list) and not value):
+        return None
+    if isinstance(value, list):
+        return ", ".join(
+            (question.option(v).label if question.option(v) else v) for v in value  # type: ignore[union-attr]
+        )
+    if question.options:
+        option = question.option(value)
+        return option.label if option else value
+    if question.type is QuestionType.TAX_ID and len(value) == 14:
+        return f"{value[:2]}.{value[2:5]}.{value[5:8]}/{value[8:12]}-{value[12:]}"
+    return value
+
+
 def score_for(question: Question, value: AnswerValue) -> int | None:
     if not question.scored or not isinstance(value, str):
         return None
@@ -181,7 +220,30 @@ def _percent(done: int, total: int) -> int:
     return round(done * 100 / total)
 
 
-def evaluate(catalog: Catalog, values: Mapping[str, AnswerValue]) -> Evaluation:
+def ems_contribution(question: Question, value: AnswerValue) -> float | None:
+    """Pontos de EMS de uma resposta: pontos / máximo × peso no EMS."""
+    score = score_for(question, value)
+    if score is None or not question.max_points:
+        return None
+    return score / question.max_points * (question.ems_weight or 0.0)
+
+
+def evaluate(
+    catalog: Catalog,
+    values: Mapping[str, AnswerValue],
+    *,
+    available_step_ids: Collection[str] | None = None,
+) -> Evaluation:
+    """Calcula progresso, pilares, eixos, EMS e alertas.
+
+    ``available_step_ids`` permite reproduzir um diagnóstico concluído com as
+    etapas que estavam disponíveis na conclusão (padrão: as do catálogo).
+    """
+    available = (
+        set(available_step_ids)
+        if available_step_ids is not None
+        else {s.id for s in catalog.available_steps()}
+    )
     visible = visible_questions(catalog, values)
     visible_ids = {q.id for q in visible}
 
@@ -189,7 +251,7 @@ def evaluate(catalog: Catalog, values: Mapping[str, AnswerValue]) -> Evaluation:
     required_total = 0
     required_answered = 0
     for step in sorted(catalog.steps, key=lambda s: s.order):
-        if step.availability is not StepAvailability.AVAILABLE:
+        if step.id not in available:
             steps.append(StepProgress(step_id=step.id, status=StepStatus.MAINTENANCE))
             continue
         questions = catalog.questions_for_step(step.id)
@@ -222,7 +284,7 @@ def evaluate(catalog: Catalog, values: Mapping[str, AnswerValue]) -> Evaluation:
         required_answered += progress.required_answered
         steps.append(progress)
 
-    available_step_ids = {s.id for s in catalog.available_steps()}
+    available_step_ids = available
     pillars: list[PillarScore] = []
     ems_points = 0.0
     ems_max = 0.0
@@ -234,11 +296,13 @@ def evaluate(catalog: Catalog, values: Mapping[str, AnswerValue]) -> Evaluation:
         ]
         points = 0
         answered = 0
+        pillar_ems = 0.0
         for question in scored:
             score = score_for(question, values.get(question.id))
             if score is not None:
                 points += score
                 answered += 1
+                pillar_ems += ems_contribution(question, values.get(question.id)) or 0.0
         max_points = sum(q.max_points for q in scored)
         pillars.append(
             PillarScore(
@@ -248,6 +312,8 @@ def evaluate(catalog: Catalog, values: Mapping[str, AnswerValue]) -> Evaluation:
                 percent=round(points * 100 / max_points, 1) if max_points else None,
                 answered=answered,
                 total=len(scored),
+                ems_points=round(pillar_ems, 2),
+                ems_max=round(sum(q.ems_weight or 0.0 for q in scored), 2),
             )
         )
     for question in visible:
@@ -258,6 +324,30 @@ def evaluate(catalog: Catalog, values: Mapping[str, AnswerValue]) -> Evaluation:
         score = score_for(question, values.get(question.id))
         if score is not None and question.max_points:
             ems_points += score / question.max_points * weight
+
+    axes: list[AxisScore] = []
+    for step in sorted(catalog.steps, key=lambda s: s.order):
+        if step.kind is not StepKind.AXIS:
+            continue
+        if step.id not in available_step_ids:
+            axes.append(AxisScore(step_id=step.id, status=AxisStatus.MAINTENANCE))
+            continue
+        scored = [q for q in visible if q.scored and q.step_id == step.id]
+        axis = AxisScore(
+            step_id=step.id,
+            status=AxisStatus.EVALUATED,
+            scored_questions=len(scored),
+            max_points=sum(q.max_points for q in scored),
+            ems_max=sum(q.ems_weight or 0.0 for q in scored),
+        )
+        for question in scored:
+            value = values.get(question.id)
+            axis.points += score_for(question, value) or 0
+            axis.ems_points += ems_contribution(question, value) or 0.0
+        axis.ems_points = round(axis.ems_points, 2)
+        axis.ems_max = round(axis.ems_max, 2)
+        axis.percent = round(axis.ems_points * 100 / axis.ems_max, 1) if axis.ems_max else None
+        axes.append(axis)
 
     alerts: list[Alert] = []
     for question in visible:
@@ -278,6 +368,7 @@ def evaluate(catalog: Catalog, values: Mapping[str, AnswerValue]) -> Evaluation:
 
     return Evaluation(
         alerts=alerts,
+        axes=axes,
         steps=steps,
         progress=_percent(required_answered, required_total),
         required_total=required_total,
@@ -292,6 +383,10 @@ def evaluate(catalog: Catalog, values: Mapping[str, AnswerValue]) -> Evaluation:
 __all__ = [
     "Alert",
     "AnswerValue",
+    "AxisScore",
+    "AxisStatus",
+    "display_answer",
+    "ems_contribution",
     "EmsScore",
     "Evaluation",
     "InvalidAnswerError",

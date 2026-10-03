@@ -73,6 +73,10 @@ class MaturityDiagnosticDocument(DomainDocument):
     completed_by: UUID | None = None
     #: Resultado congelado no momento da conclusão (base do relatório).
     result: dict[str, Any] | None = None
+    #: Relatório gerado (``MaturityReport`` serializado) e marcos de geração.
+    report: dict[str, Any] | None = None
+    report_generated_at: datetime | None = None
+    pdf_generated_at: datetime | None = None
 
     def answer_values(self) -> dict[str, str | list[str] | None]:
         return {qid: resp.value for qid, resp in self.responses.items()}

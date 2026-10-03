@@ -31,7 +31,6 @@ from src.modules.maturity_diagnostics.engine import (
     AnswerValue,
     Evaluation,
     InvalidAnswerError,
-    StepStatus,
     evaluate,
     normalize_answer,
     score_for,
@@ -43,18 +42,16 @@ from src.modules.maturity_diagnostics.model import (
     MaturityDiagnosticDocument,
     ResponseSource,
 )
+from src.modules.maturity_diagnostics.report_pdf import render_report_pdf, report_filename
+from src.modules.maturity_diagnostics.report_schema import MaturityReport
+from src.modules.maturity_diagnostics.report_service import DiagnosticReportService
 from src.modules.maturity_diagnostics.repository import MaturityDiagnosticsRepository
 from src.modules.maturity_diagnostics.schema import (
     DiagnosticCompanyItem,
     DiagnosticCompanyListResponse,
     DiagnosticDetail,
     DiagnosticListResponse,
-    DiagnosticReport,
     DiagnosticSummary,
-    ReportAnswer,
-    ReportPillar,
-    ReportSection,
-    ReportStep,
     ResponseOut,
     SaveResponsesRequest,
 )
@@ -66,6 +63,8 @@ logger = get_logger(__name__)
 AUDIT_RESOURCE = "maturity_diagnostic"
 AUDIT_CREATED = "maturity_diagnostic.created"
 AUDIT_COMPLETED = "maturity_diagnostic.completed"
+AUDIT_REPORT_GENERATED = "maturity_diagnostic.report_generated"
+AUDIT_PDF_GENERATED = "maturity_diagnostic.report_pdf_generated"
 
 _COMPLETED_PER_COMPANY = 5
 
@@ -422,65 +421,67 @@ class MaturityDiagnosticsService:
         return self._detail(updated, company, agent)
 
     # --------------------------------------------------------------- relatório
-    async def report(self, firebase_uid: str, diagnostic_id: UUID) -> DiagnosticReport:
-        agent, _, diagnostic, company = await self._load_owned(firebase_uid, diagnostic_id)
+    async def generate_report(
+        self, firebase_uid: str, diagnostic_id: UUID
+    ) -> tuple[MaturityReport, bool]:
+        """Gera e persiste o relatório. Idempotente: reaproveita o já gerado.
+
+        Retorna ``(relatório, gerado_agora)``.
+        """
+        agent, _, diagnostic, _ = await self._load_owned(firebase_uid, diagnostic_id)
+        self._ensure_completed(diagnostic)
+        if diagnostic.report:
+            return MaturityReport.model_validate(diagnostic.report), False
+        report = DiagnosticReportService(self._catalog).build(diagnostic, agent)
+        now = utcnow()
+        await self._repo.update(
+            diagnostic.id,
+            {"report": report.model_dump(mode="python"), "report_generated_at": now},
+            only_open=False,
+        )
+        await self._record(
+            AUDIT_REPORT_GENERATED,
+            diagnostic,
+            agent.id,
+            after={
+                "report_version": report.versions.report_version,
+                "methodology_version": report.versions.methodology_version,
+            },
+        )
+        return report, True
+
+    async def get_report(self, firebase_uid: str, diagnostic_id: UUID) -> MaturityReport:
+        _, _, diagnostic, _ = await self._load_owned(firebase_uid, diagnostic_id)
+        self._ensure_completed(diagnostic)
+        if not diagnostic.report:
+            raise NotFoundError(
+                "The report has not been generated yet.", code="report_not_generated"
+            )
+        return MaturityReport.model_validate(diagnostic.report)
+
+    async def report_pdf(self, firebase_uid: str, diagnostic_id: UUID) -> tuple[bytes, str]:
+        """PDF do relatório persistido. Retorna ``(bytes, nome_do_arquivo)``."""
+        agent, _, diagnostic, _ = await self._load_owned(firebase_uid, diagnostic_id)
+        self._ensure_completed(diagnostic)
+        if not diagnostic.report:
+            raise NotFoundError(
+                "Generate the report before exporting the PDF.", code="report_not_generated"
+            )
+        report = MaturityReport.model_validate(diagnostic.report)
+        pdf = render_report_pdf(report)
+        await self._repo.update(
+            diagnostic.id, {"pdf_generated_at": utcnow()}, only_open=False
+        )
+        await self._record(AUDIT_PDF_GENERATED, diagnostic, agent.id)
+        return pdf, report_filename(report)
+
+    @staticmethod
+    def _ensure_completed(diagnostic: MaturityDiagnosticDocument) -> None:
         if diagnostic.status != DiagnosticStatus.COMPLETED:
             raise ConflictError(
                 "The report is available after the diagnostic is completed.",
                 code="diagnostic_not_completed",
             )
-        evaluation = self._evaluation_for(diagnostic)
-        visible = set(evaluation.visible_question_ids)
-        # Etapas que estavam em manutenção quando o diagnóstico foi concluído
-        # continuam assim no relatório, mesmo que tenham sido ativadas depois.
-        maintenance_at_completion = {
-            progress.step_id
-            for progress in evaluation.steps
-            if progress.status is StepStatus.MAINTENANCE
-        }
-        steps: list[ReportStep] = []
-        for step in sorted(self._catalog.steps, key=lambda s: s.order):
-            sections: list[ReportSection] = []
-            for section in (s for s in self._catalog.sections if s.step_id == step.id):
-                answers = [
-                    _report_answer(q, diagnostic.responses.get(q.id))
-                    for q in self._catalog.questions
-                    if q.section_id == section.id and q.id in visible
-                ]
-                sections.append(ReportSection(id=section.id, title=section.title, answers=answers))
-            steps.append(
-                ReportStep(
-                    id=step.id,
-                    title=step.title,
-                    availability=(
-                        StepAvailability.MAINTENANCE.value
-                        if step.id in maintenance_at_completion
-                        else step.availability.value
-                    ),
-                    sections=sections,
-                )
-            )
-        pillar_meta = {p.id: p for p in self._catalog.pillars}
-        pillars = [
-            ReportPillar(
-                **score.model_dump(),
-                code=pillar_meta[score.pillar_id].code,
-                name=pillar_meta[score.pillar_id].name,
-                ems_weight=pillar_meta[score.pillar_id].ems_weight,
-            )
-            for score in evaluation.pillars
-        ]
-        return DiagnosticReport(
-            diagnostic=self._summary(diagnostic, company),
-            company=diagnostic.company_snapshot,
-            agent_name=agent.name or str(agent.email),
-            catalog_version=diagnostic.catalog_version,
-            generated_at=utcnow(),
-            steps=steps,
-            pillars=pillars,
-            ems=evaluation.ems,
-            alerts=evaluation.alerts,
-        )
 
     # --------------------------------------------------------------- helpers
     def _evaluation_for(self, diagnostic: MaturityDiagnosticDocument) -> Evaluation:
@@ -524,6 +525,7 @@ class MaturityDiagnosticsService:
             updated_at=diagnostic.updated_at,
             started_at=diagnostic.started_at,
             completed_at=diagnostic.completed_at,
+            report_generated_at=diagnostic.report_generated_at,
         )
 
     def _detail(
@@ -620,35 +622,6 @@ def _build_response(
         registry_value=registry_value,
         updated_at=now,
         updated_by=agent_id,
-    )
-
-
-def _display_value(question: Question, value: AnswerValue) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, list):
-        labels = [(question.option(v).label if question.option(v) else v) for v in value]
-        return ", ".join(labels)
-    if question.options:
-        option = question.option(value)
-        return option.label if option else value
-    return value
-
-
-def _report_answer(question: Question, response: DiagnosticResponse | None) -> ReportAnswer:
-    value = response.value if response else None
-    return ReportAnswer(
-        question_id=question.id,
-        code=question.code,
-        number=question.number,
-        label=question.label,
-        value=value,
-        display_value=_display_value(question, value),
-        source=response.source if response else None,
-        scored=question.scored,
-        points=score_for(question, value),
-        max_points=question.max_points if question.scored else None,
-        pillar_id=question.pillar_id,
     )
 
 

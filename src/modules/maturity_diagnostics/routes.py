@@ -14,13 +14,13 @@ from src.modules.dmc.repository import AuditEventsRepository, DmcPortfolioReposi
 from src.modules.dmc.scope import ScopeService
 from src.modules.maturity_diagnostics.catalog import Catalog
 from src.modules.maturity_diagnostics.model import DiagnosticStatus
+from src.modules.maturity_diagnostics.report_schema import MaturityReport
 from src.modules.maturity_diagnostics.repository import MaturityDiagnosticsRepository
 from src.modules.maturity_diagnostics.schema import (
     DiagnosticCompanyListResponse,
     DiagnosticCreate,
     DiagnosticDetail,
     DiagnosticListResponse,
-    DiagnosticReport,
     SaveResponsesRequest,
 )
 from src.modules.maturity_diagnostics.service import MaturityDiagnosticsService
@@ -155,15 +155,53 @@ async def complete_diagnostic(
     return await service.complete(current_user.uid, diagnostic_id)
 
 
+@router.post(
+    "/{diagnostic_id}/report",
+    response_model=MaturityReport,
+    status_code=status.HTTP_201_CREATED,
+    summary="Gera e persiste o relatório do diagnóstico concluído (200 se já existir).",
+)
+async def generate_report(
+    diagnostic_id: UUID,
+    response: Response,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+) -> MaturityReport:
+    report, created = await service.generate_report(current_user.uid, diagnostic_id)
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return report
+
+
 @router.get(
     "/{diagnostic_id}/report",
-    response_model=DiagnosticReport,
-    summary="Dados estruturados do relatório final (diagnóstico concluído).",
+    response_model=MaturityReport,
+    summary="Relatório já gerado (dados persistidos).",
 )
 async def get_report(
     diagnostic_id: UUID, service: ServiceDep, current_user: CurrentUserDep
-) -> DiagnosticReport:
-    return await service.report(current_user.uid, diagnostic_id)
+) -> MaturityReport:
+    return await service.get_report(current_user.uid, diagnostic_id)
+
+
+@router.get(
+    "/{diagnostic_id}/report/pdf",
+    response_class=Response,
+    summary="PDF do relatório (gerado a partir dos dados persistidos).",
+    responses={200: {"content": {"application/pdf": {}}}},
+)
+async def get_report_pdf(
+    diagnostic_id: UUID, service: ServiceDep, current_user: CurrentUserDep
+) -> Response:
+    pdf, filename = await service.report_pdf(current_user.uid, diagnostic_id)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 __all__ = ["build_service", "router"]

@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import Field
 
 from src.modules.companies.model import CompanyRegistrationStatus
-from src.modules.maturity_diagnostics.engine import Alert, EmsScore, Evaluation, PillarScore
+from src.modules.maturity_diagnostics.engine import Evaluation
 from src.modules.maturity_diagnostics.model import (
     CompanySnapshot,
     DiagnosticStatus,
@@ -55,6 +55,8 @@ class DiagnosticSummary(APIModel):
     updated_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    #: Quando o relatório foi gerado (``None`` = ainda não gerado).
+    report_generated_at: datetime | None = None
 
 
 class DiagnosticDetail(DiagnosticSummary):
@@ -91,58 +93,6 @@ class DiagnosticCompanyListResponse(APIModel):
     total: int
 
 
-class ReportAnswer(APIModel):
-    question_id: str
-    code: str | None = None
-    number: int | None = None
-    label: str
-    value: str | list[str] | None = None
-    display_value: str | None = None
-    source: ResponseSource | None = None
-    scored: bool = False
-    points: int | None = None
-    max_points: int | None = None
-    pillar_id: str | None = None
-
-
-class ReportSection(APIModel):
-    id: str
-    title: str
-    answers: list[ReportAnswer]
-
-
-class ReportStep(APIModel):
-    id: str
-    title: str
-    availability: str
-    sections: list[ReportSection]
-
-
-class ReportPillar(PillarScore):
-    code: str
-    name: str
-    ems_weight: float | None = None
-
-
-class DiagnosticReport(APIModel):
-    """Base estruturada do relatório final (visualização, PDF e compartilhamento)."""
-
-    diagnostic: DiagnosticSummary
-    company: CompanySnapshot
-    agent_name: str | None = None
-    catalog_version: str
-    generated_at: datetime
-    steps: list[ReportStep]
-    pillars: list[ReportPillar]
-    ems: EmsScore
-    alerts: list[Alert] = Field(default_factory=list)
-    #: Ainda sem régua definida — preenchido quando as faixas forem especificadas.
-    maturity_level: str | None = None
-    observations: list[str] = Field(default_factory=list)
-    recommendations: list[str] = Field(default_factory=list)
-    executive_summary: str | None = None
-
-
 __all__ = [
     "AnswerInput",
     "DiagnosticCompanyItem",
@@ -150,12 +100,7 @@ __all__ = [
     "DiagnosticCreate",
     "DiagnosticDetail",
     "DiagnosticListResponse",
-    "DiagnosticReport",
     "DiagnosticSummary",
-    "ReportAnswer",
-    "ReportPillar",
-    "ReportSection",
-    "ReportStep",
     "ResponseOut",
     "SaveResponsesRequest",
 ]
