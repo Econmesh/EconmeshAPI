@@ -24,7 +24,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CATALOG_VERSION = "2026-10.4"
+CATALOG_VERSION = "2026-10.5"
 
 
 class StepKind(StrEnum):
@@ -248,8 +248,10 @@ _STEPS = (
         kind=StepKind.AXIS,
         title="Eixo 4 — Viabilidade Econômica",
         short_title="Viabilidade Econômica",
-        availability=StepAvailability.MAINTENANCE,
-        maintenance_message=_MAINTENANCE_MESSAGE,
+        description=(
+            "Custos atuais com descarte e gestão de resíduos e disponibilidade de "
+            "investimento para a transição circular."
+        ),
     ),
 )
 
@@ -307,6 +309,16 @@ _SECTIONS = (
         step_id=STEP_ESG,
         title="Governança e metas",
     ),
+    Section(
+        id="ve_costs",
+        step_id=STEP_ECONOMIC,
+        title="Custos de gestão de resíduos",
+    ),
+    Section(
+        id="ve_investment",
+        step_id=STEP_ECONOMIC,
+        title="Capacidade de investimento",
+    ),
 )
 
 _PILLARS = (
@@ -321,6 +333,7 @@ _ID = STEP_IDENTIFICATION
 _FM = STEP_MATERIAL_FLOWS
 _PS = STEP_SYMBIOSIS
 _ESG = STEP_ESG
+_VE = STEP_ECONOMIC
 
 _QUESTIONS = (
     # ---------------------------------------------------------- Identificação
@@ -739,6 +752,63 @@ _QUESTIONS = (
         # Aparece no Eixo 3, mas é contabilizada no Pilar 4 (VE).
         scored=True, pillar_id=PILLAR_VE, pillar_weight=25, ems_weight=5,
         objective="Metas formais facilitam a decisão de investimento (ROI).",
+    ),
+    # ------------------------ Eixo 4 — 1. Custos de gestão de resíduos
+    Question(
+        id="ve_q44", code="4.1", number=44, step_id=_VE, section_id="ve_costs",
+        label="Como classifica o custo atual de descarte e logística associada?",
+        type=QuestionType.SINGLE_CHOICE,
+        options=(
+            Option(value="alto", label="Alto", points=35),
+            Option(value="medio", label="Médio", points=20),
+            Option(value="baixo", label="Baixo", points=5),
+        ),
+        scored=True, pillar_id=PILLAR_VE, pillar_weight=35, ems_weight=7,
+        objective="Incentivo financeiro: custos altos criam urgência para circularizar.",
+    ),
+    Question(
+        id="ve_q45", code="4.2", number=45, step_id=_VE, section_id="ve_costs",
+        label="Qual o custo mensal aproximado total com gestão de resíduos?",
+        type=QuestionType.SINGLE_CHOICE,
+        options=(
+            Option(value="acima_50000", label="Acima de R$ 50.000", points=20),
+            Option(value="10001_50000", label="Entre R$ 10.001 e R$ 50.000", points=10),
+            Option(value="ate_10000", label="Até R$ 10.000", points=5),
+        ),
+        scored=True, pillar_id=PILLAR_VE, pillar_weight=20, ems_weight=4,
+        objective="Impacto financeiro real: custos altos indicam maior ROI potencial.",
+    ),
+    Question(
+        id="ve_q47", code="4.3", number=47, step_id=_VE, section_id="ve_costs",
+        label="Custo mensal aproximado total com gestão de resíduos (detalhamento)",
+        type=QuestionType.LONG_TEXT, required=False,
+        help_text=(
+            "Descreva a composição do custo (coleta, transporte, destinação, taxas)."
+        ),
+    ),
+    # ---------------------------- Eixo 4 — 2. Capacidade de investimento
+    Question(
+        id="ve_q46", code="4.4", number=46, step_id=_VE, section_id="ve_investment",
+        label=(
+            "Possui orçamento ou disponibilidade de investimento (CAPEX) para circularidade?"
+        ),
+        type=QuestionType.SINGLE_CHOICE,
+        options=(
+            Option(value="sim_roi_12m", label="Sim ROI menor que 12 meses", points=20),
+            Option(value="apenas_custo_zero", label="Apenas custo zero", points=10),
+            Option(value="sem_orcamento", label="Sem orçamento", points=0),
+        ),
+        scored=True, pillar_id=PILLAR_VE, pillar_weight=20, ems_weight=4,
+        objective="Prontidão de investimento: sem orçamento indica barreira financeira.",
+    ),
+    Question(
+        id="ve_q48", code="4.5", number=48, step_id=_VE, section_id="ve_investment",
+        label=(
+            "Orçamento ou disponibilidade de investimento (CAPEX) para circularidade "
+            "(detalhamento)"
+        ),
+        type=QuestionType.LONG_TEXT, required=False,
+        help_text="Descreva fontes de financiamento, limites de CAPEX e critérios de ROI.",
     ),
 )
 

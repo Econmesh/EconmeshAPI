@@ -20,6 +20,7 @@ from src.modules.maturity_diagnostics.catalog import (
     PILLAR_FM,
     PILLAR_PS,
     PILLAR_VE,
+    STEP_ECONOMIC,
     STEP_ESG,
     STEP_MATERIAL_FLOWS,
     STEP_SYMBIOSIS,
@@ -89,18 +90,26 @@ AXIS3_ANSWERS = {
     "esg_q39": "nenhum_registro",
     "esg_q40": "nao_possui",
 }
-ALL_ANSWERS = {**IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS, **AXIS2_ANSWERS, **AXIS3_ANSWERS}
+AXIS4_ANSWERS = {
+    "ve_q44": "alto",
+    "ve_q45": "10001_50000",
+    "ve_q46": "apenas_custo_zero",
+}
+ALL_ANSWERS = {
+    **IDENTIFICATION_ANSWERS,
+    **AXIS1_ANSWERS,
+    **AXIS2_ANSWERS,
+    **AXIS3_ANSWERS,
+    **AXIS4_ANSWERS,
+}
 
 
 # ------------------------------------------------------------------- catálogo
-def test_catalog_keeps_future_axes_in_maintenance_without_questions() -> None:
+def test_catalog_has_all_axes_available() -> None:
     steps = {s.id: s for s in CATALOG.steps}
     assert [s.order for s in CATALOG.steps] == [1, 2, 3, 4, 5]
     assert steps[STEP_SYMBIOSIS].availability is StepAvailability.AVAILABLE
-    assert steps[STEP_ESG].availability is StepAvailability.AVAILABLE
-    for step_id in ("axis_4_economic",):
-        assert steps[step_id].availability is StepAvailability.MAINTENANCE
-        assert CATALOG.questions_for_step(step_id) == []
+    assert all(step.availability is StepAvailability.AVAILABLE for step in CATALOG.steps)
 
 
 def test_axis_1_numbering_and_grouping() -> None:
@@ -210,6 +219,41 @@ def test_expired_operating_license_raises_critical_alert() -> None:
     assert "Licença de Operação" in alert.message
 
 
+def test_axis_4_questions_match_specification() -> None:
+    axis4 = CATALOG.questions_for_step(STEP_ECONOMIC)
+    assert [q.code for q in axis4] == [f"4.{i}" for i in range(1, 6)]
+    assert sorted(q.number for q in axis4) == list(range(44, 49))
+    expected = {
+        "ve_q44": ({"Alto": 35, "Médio": 20, "Baixo": 5}, 35, 7),
+        "ve_q45": (
+            {"Acima de R$ 50.000": 20, "Entre R$ 10.001 e R$ 50.000": 10, "Até R$ 10.000": 5},
+            20, 4,
+        ),
+        "ve_q46": (
+            {"Sim ROI menor que 12 meses": 20, "Apenas custo zero": 10, "Sem orçamento": 0},
+            20, 4,
+        ),
+    }
+    scored = {q.id: q for q in axis4 if q.scored}
+    assert set(scored) == set(expected)
+    for qid, (points, pillar_weight, ems_weight) in expected.items():
+        question = scored[qid]
+        assert {o.label: o.points for o in question.options} == points
+        assert (question.pillar_id, question.pillar_weight, question.ems_weight) == (
+            PILLAR_VE, pillar_weight, ems_weight,
+        )
+    ids = [q.id for q in axis4]
+    for parent, detail in (("ve_q45", "ve_q47"), ("ve_q46", "ve_q48")):
+        assert ids.index(detail) == ids.index(parent) + 1
+        question = next(q for q in axis4 if q.id == detail)
+        assert not question.scored and not question.required
+    # Todos os pilares completos: cada um soma 100% e os pesos fecham o EMS
+    for pillar in CATALOG.pillars:
+        questions = [q for q in CATALOG.questions if q.pillar_id == pillar.id]
+        assert sum(q.pillar_weight or 0 for q in questions) == 100, pillar.id
+        assert sum(q.ems_weight or 0 for q in questions) == pytest.approx(pillar.ems_weight)
+
+
 def test_q31_is_shown_in_axis_1_but_scored_in_symbiosis_pillar() -> None:
     q31 = CATALOG.question("q31")
     assert q31 is not None
@@ -284,23 +328,26 @@ def test_scoring_by_pillar_and_ems() -> None:
     assert (pillars[PILLAR_PS].points, pillars[PILLAR_PS].max_points) == (45, 100)
     # CL: 2.1 (15) + LO 25 + MTR parcial 10 + laudos 15 + verificação 5 + sem registro 10
     assert (pillars[PILLAR_CL].points, pillars[PILLAR_CL].max_points) == (80, 100)
-    # VE: metas — não possui = 5 de 25
-    assert (pillars[PILLAR_VE].points, pillars[PILLAR_VE].max_points) == (5, 25)
+    # VE: metas não possui 5 + custo alto 35 + R$10–50 mil 10 + apenas custo zero 10
+    assert (pillars[PILLAR_VE].points, pillars[PILLAR_VE].max_points) == (60, 100)
     # EMS: Eixo 1 26.25 + Eixo 2 (3.75 + 7.5) + Eixo 3 (6.25 + 2.5 + 3.75 + 1.25 + 2.5 + 1)
-    assert evaluation.ems.points == pytest.approx(37.5 + 17.25)
-    assert evaluation.ems.max_available == pytest.approx(58.75 + 21.25 + 5)
+    # + Eixo 4 (7 + 4*10/20 + 4*10/20)
+    assert evaluation.ems.points == pytest.approx(37.5 + 17.25 + 7 + 2 + 2)
+    # Todos os eixos disponíveis: EMS completo
+    assert evaluation.ems.max_available == pytest.approx(100)
     assert evaluation.alerts == []
 
 
-def test_maintenance_steps_do_not_affect_progress() -> None:
+def test_progress_counts_required_questions_of_all_axes() -> None:
     evaluation = evaluate(CATALOG, {})
     statuses = {s.step_id: s.status for s in evaluation.steps}
     assert statuses["axis_2_symbiosis"] is StepStatus.NOT_STARTED
     assert statuses["axis_3_esg"] is StepStatus.NOT_STARTED
-    assert statuses["axis_4_economic"] is StepStatus.MAINTENANCE
+    assert statuses["axis_4_economic"] is StepStatus.NOT_STARTED
     # Eixo 2: 7 obrigatórias visíveis (2.3 e 2.6 condicionais, 2.10 opcional)
     # Eixo 3: 6 obrigatórias (detalhamentos 3.4, 3.6 e 3.8 são opcionais)
-    assert evaluation.required_total == 8 + 14 + 7 + 6
+    # Eixo 4: 3 obrigatórias (detalhamentos 4.3 e 4.5 são opcionais)
+    assert evaluation.required_total == 8 + 14 + 7 + 6 + 3
 
 
 # ------------------------------------------------------------------- validação
@@ -504,7 +551,7 @@ async def test_complete_requires_all_available_steps() -> None:
     patch = repo.update.await_args.args[1]
     assert patch["status"] == DiagnosticStatus.COMPLETED.value
     assert patch["is_open"] is False
-    assert patch["result"]["ems"]["points"] == pytest.approx(54.75)
+    assert patch["result"]["ems"]["points"] == pytest.approx(65.75)
     assert detail.can_edit is False
 
 
@@ -519,7 +566,7 @@ async def test_validate_step_reports_missing_required() -> None:
     assert "q04" in exc.value.details["missing"]
 
     with pytest.raises(ValidationAppError):
-        await service.validate_step("agent-uid", diagnostic.id, "axis_4_economic")
+        await service.validate_step("agent-uid", diagnostic.id, "eixo_inexistente")
 
 
 async def test_routes_require_dmc_agent(app: FastAPI, client: AsyncClient) -> None:
