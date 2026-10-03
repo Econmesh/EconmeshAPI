@@ -19,6 +19,8 @@ from src.modules.maturity_diagnostics.catalog import (
     PILLAR_CL,
     PILLAR_FM,
     PILLAR_PS,
+    PILLAR_VE,
+    STEP_ESG,
     STEP_MATERIAL_FLOWS,
     STEP_SYMBIOSIS,
     StepAvailability,
@@ -79,7 +81,15 @@ AXIS2_ANSWERS = {
     "ps_q32": ["vender_residuos", "simbiose_industrial"],
     "ps_q33": "nao",
 }
-ALL_ANSWERS = {**IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS, **AXIS2_ANSWERS}
+AXIS3_ANSWERS = {
+    "esg_q35": "ativa_regularizada",
+    "esg_q36": "parcialmente",
+    "esg_q37": "sim_menos_1_ano",
+    "esg_q38": "verificacao_basica",
+    "esg_q39": "nenhum_registro",
+    "esg_q40": "nao_possui",
+}
+ALL_ANSWERS = {**IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS, **AXIS2_ANSWERS, **AXIS3_ANSWERS}
 
 
 # ------------------------------------------------------------------- catálogo
@@ -87,7 +97,8 @@ def test_catalog_keeps_future_axes_in_maintenance_without_questions() -> None:
     steps = {s.id: s for s in CATALOG.steps}
     assert [s.order for s in CATALOG.steps] == [1, 2, 3, 4, 5]
     assert steps[STEP_SYMBIOSIS].availability is StepAvailability.AVAILABLE
-    for step_id in ("axis_3_esg", "axis_4_economic"):
+    assert steps[STEP_ESG].availability is StepAvailability.AVAILABLE
+    for step_id in ("axis_4_economic",):
         assert steps[step_id].availability is StepAvailability.MAINTENANCE
         assert CATALOG.questions_for_step(step_id) == []
 
@@ -147,6 +158,56 @@ def test_axis_2_conditionals() -> None:
     assert "ps_q27" in ids({"ps_q26": "sim"})
     assert "ps_q30" not in ids({"ps_q29": "nao"})
     assert "ps_q30" in ids({"ps_q29": "sim"})
+
+
+def test_axis_3_questions_match_specification() -> None:
+    axis3 = CATALOG.questions_for_step(STEP_ESG)
+    assert [q.code for q in axis3] == [f"3.{i}" for i in range(1, 10)]
+    assert sorted(q.number for q in axis3) == list(range(35, 44))
+    expected = {
+        "esg_q35": ({"Ativa e Regularizada": 25, "Vencida ou Inexistente": 0}, PILLAR_CL, 25, 6.25),
+        "esg_q36": ({"Sim 100%": 25, "Parcialmente": 10, "Não emite": 0}, PILLAR_CL, 25, 6.25),
+        "esg_q37": (
+            {"Sim menos de 1 ano 100%": 15, "Parcialmente": 7, "Não possui": 0},
+            PILLAR_CL, 15, 3.75,
+        ),
+        "esg_q38": (
+            {"Homologação rigorosa": 10, "Verificação básica": 5, "Não rastreia": 0},
+            PILLAR_CL, 10, 2.5,
+        ),
+        "esg_q39": (
+            {"Nenhum registro": 10, "Notificações em aberto": 3, "Prefere não declarar": 0},
+            PILLAR_CL, 10, 2.5,
+        ),
+        "esg_q40": ({"Possui metas formais": 25, "Não possui": 5}, PILLAR_VE, 25, 5),
+    }
+    scored = {q.id: q for q in axis3 if q.scored}
+    assert set(scored) == set(expected)
+    for qid, (points, pillar, pillar_weight, ems_weight) in expected.items():
+        question = scored[qid]
+        assert {o.label: o.points for o in question.options} == points
+        assert (question.pillar_id, question.pillar_weight, question.ems_weight) == (
+            pillar, pillar_weight, ems_weight,
+        )
+    # Detalhamentos: logo após a pergunta que complementam, não pontuados e opcionais.
+    ids = [q.id for q in axis3]
+    for parent, detail in (("esg_q37", "esg_q41"), ("esg_q38", "esg_q42"), ("esg_q39", "esg_q43")):
+        assert ids.index(detail) == ids.index(parent) + 1
+        question = next(q for q in axis3 if q.id == detail)
+        assert not question.scored and not question.required
+    # Pilar CL completo (100%) = 25% do EMS; VE = 20%
+    cl = [q for q in CATALOG.questions if q.pillar_id == PILLAR_CL]
+    assert sum(q.pillar_weight or 0 for q in cl) == 100
+    assert sum(q.ems_weight or 0 for q in cl) == pytest.approx(25)
+    assert sum(p.ems_weight or 0 for p in CATALOG.pillars) == 100
+
+
+def test_expired_operating_license_raises_critical_alert() -> None:
+    evaluation = evaluate(CATALOG, {**ALL_ANSWERS, "esg_q35": "vencida_inexistente"})
+    assert len(evaluation.alerts) == 1
+    alert = evaluation.alerts[0]
+    assert (alert.question_id, alert.level) == ("esg_q35", "critical")
+    assert "Licença de Operação" in alert.message
 
 
 def test_q31_is_shown_in_axis_1_but_scored_in_symbiosis_pillar() -> None:
@@ -221,20 +282,25 @@ def test_scoring_by_pillar_and_ems() -> None:
     assert (pillars[PILLAR_FM].points, pillars[PILLAR_FM].max_points) == (75, 100)
     # PS: Q31 (Eixo 1) sazonal 15 + Q28 (Eixo 2) média 30 — pilar completo (40% + 60%)
     assert (pillars[PILLAR_PS].points, pillars[PILLAR_PS].max_points) == (45, 100)
-    # CL: Q25 coprocessamento/reciclagem = 15 de 15
-    assert (pillars[PILLAR_CL].points, pillars[PILLAR_CL].max_points) == (15, 15)
-    # EMS: Eixo 1 (12 + 7.5 + 3.75 + 1.5 + 1.5) + Q25 3.75 + Q28 15*30/60
-    assert evaluation.ems.points == pytest.approx(26.25 + 3.75 + 7.5)
-    assert evaluation.ems.max_available == pytest.approx(40 + 3.75 + 15)
+    # CL: 2.1 (15) + LO 25 + MTR parcial 10 + laudos 15 + verificação 5 + sem registro 10
+    assert (pillars[PILLAR_CL].points, pillars[PILLAR_CL].max_points) == (80, 100)
+    # VE: metas — não possui = 5 de 25
+    assert (pillars[PILLAR_VE].points, pillars[PILLAR_VE].max_points) == (5, 25)
+    # EMS: Eixo 1 26.25 + Eixo 2 (3.75 + 7.5) + Eixo 3 (6.25 + 2.5 + 3.75 + 1.25 + 2.5 + 1)
+    assert evaluation.ems.points == pytest.approx(37.5 + 17.25)
+    assert evaluation.ems.max_available == pytest.approx(58.75 + 21.25 + 5)
+    assert evaluation.alerts == []
 
 
 def test_maintenance_steps_do_not_affect_progress() -> None:
     evaluation = evaluate(CATALOG, {})
     statuses = {s.step_id: s.status for s in evaluation.steps}
     assert statuses["axis_2_symbiosis"] is StepStatus.NOT_STARTED
-    assert statuses["axis_3_esg"] is StepStatus.MAINTENANCE
+    assert statuses["axis_3_esg"] is StepStatus.NOT_STARTED
+    assert statuses["axis_4_economic"] is StepStatus.MAINTENANCE
     # Eixo 2: 7 obrigatórias visíveis (2.3 e 2.6 condicionais, 2.10 opcional)
-    assert evaluation.required_total == 8 + 14 + 7
+    # Eixo 3: 6 obrigatórias (detalhamentos 3.4, 3.6 e 3.8 são opcionais)
+    assert evaluation.required_total == 8 + 14 + 7 + 6
 
 
 # ------------------------------------------------------------------- validação
@@ -438,7 +504,7 @@ async def test_complete_requires_all_available_steps() -> None:
     patch = repo.update.await_args.args[1]
     assert patch["status"] == DiagnosticStatus.COMPLETED.value
     assert patch["is_open"] is False
-    assert patch["result"]["ems"]["points"] == pytest.approx(37.5)
+    assert patch["result"]["ems"]["points"] == pytest.approx(54.75)
     assert detail.can_edit is False
 
 
@@ -453,7 +519,7 @@ async def test_validate_step_reports_missing_required() -> None:
     assert "q04" in exc.value.details["missing"]
 
     with pytest.raises(ValidationAppError):
-        await service.validate_step("agent-uid", diagnostic.id, "axis_3_esg")
+        await service.validate_step("agent-uid", diagnostic.id, "axis_4_economic")
 
 
 async def test_routes_require_dmc_agent(app: FastAPI, client: AsyncClient) -> None:

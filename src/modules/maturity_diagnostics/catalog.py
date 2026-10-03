@@ -24,7 +24,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CATALOG_VERSION = "2026-10.3"
+CATALOG_VERSION = "2026-10.4"
 
 
 class StepKind(StrEnum):
@@ -78,10 +78,18 @@ class Pillar(_Frozen):
     ems_weight: float | None = None
 
 
+class AlertLevel(StrEnum):
+    CRITICAL = "critical"
+    WARNING = "warning"
+
+
 class Option(_Frozen):
     value: str
     label: str
     points: int | None = None
+    #: Alerta gerado quando esta opção é escolhida (ex.: risco jurídico crítico).
+    alert_level: AlertLevel | None = None
+    alert_message: str | None = None
 
 
 class Condition(_Frozen):
@@ -184,6 +192,7 @@ STEP_ECONOMIC = "axis_4_economic"
 PILLAR_FM = "fm"
 PILLAR_PS = "ps"
 PILLAR_CL = "cl"
+PILLAR_VE = "ve"
 
 _YES_NO = (Option(value="sim", label="Sim"), Option(value="nao", label="Não"))
 
@@ -228,8 +237,10 @@ _STEPS = (
         kind=StepKind.AXIS,
         title="Eixo 3 — Conformidade ESG",
         short_title="Conformidade ESG",
-        availability=StepAvailability.MAINTENANCE,
-        maintenance_message=_MAINTENANCE_MESSAGE,
+        description=(
+            "Licenciamento, rastreabilidade, caracterização dos resíduos, governança da "
+            "cadeia de destinação, histórico regulatório e metas de sustentabilidade."
+        ),
     ),
     Step(
         id=STEP_ECONOMIC,
@@ -276,6 +287,26 @@ _SECTIONS = (
         step_id=STEP_SYMBIOSIS,
         title="Interesse e engajamento",
     ),
+    Section(
+        id="esg_licensing",
+        step_id=STEP_ESG,
+        title="Licenciamento e rastreabilidade",
+    ),
+    Section(
+        id="esg_chain",
+        step_id=STEP_ESG,
+        title="Caracterização e cadeia de destinação",
+    ),
+    Section(
+        id="esg_regulatory",
+        step_id=STEP_ESG,
+        title="Histórico regulatório",
+    ),
+    Section(
+        id="esg_governance",
+        step_id=STEP_ESG,
+        title="Governança e metas",
+    ),
 )
 
 _PILLARS = (
@@ -283,11 +314,13 @@ _PILLARS = (
     Pillar(id=PILLAR_FM, code="FM", name="Pilar 1 — Fluxo de Materiais", ems_weight=30),
     Pillar(id=PILLAR_PS, code="PS", name="Pilar 2 — Potencial de Simbiose", ems_weight=25),
     Pillar(id=PILLAR_CL, code="CL", name="Pilar 3 — CL", ems_weight=25),
+    Pillar(id=PILLAR_VE, code="VE", name="Pilar 4 — VE", ems_weight=20),
 )
 
 _ID = STEP_IDENTIFICATION
 _FM = STEP_MATERIAL_FLOWS
 _PS = STEP_SYMBIOSIS
+_ESG = STEP_ESG
 
 _QUESTIONS = (
     # ---------------------------------------------------------- Identificação
@@ -597,6 +630,116 @@ _QUESTIONS = (
         label="Observações adicionais ou oportunidades percebidas",
         type=QuestionType.LONG_TEXT, required=False,
     ),
+    # ---------------------- Eixo 3 — 1. Licenciamento e rastreabilidade
+    Question(
+        id="esg_q35", code="3.1", number=35, step_id=_ESG, section_id="esg_licensing",
+        label="Qual a situação atual da Licença de Operação (LO) da empresa?",
+        type=QuestionType.SINGLE_CHOICE,
+        options=(
+            Option(value="ativa_regularizada", label="Ativa e Regularizada", points=25),
+            Option(
+                value="vencida_inexistente", label="Vencida ou Inexistente", points=0,
+                alert_level=AlertLevel.CRITICAL,
+                alert_message=(
+                    "Risco crítico: Licença de Operação vencida ou inexistente. A LO ativa "
+                    "é pré-requisito para a simbiose industrial."
+                ),
+            ),
+        ),
+        scored=True, pillar_id=PILLAR_CL, pillar_weight=25, ems_weight=6.25,
+        objective="Trava de segurança jurídica: LO ativa é pré-requisito para simbiose.",
+    ),
+    Question(
+        id="esg_q36", code="3.2", number=36, step_id=_ESG, section_id="esg_licensing",
+        label="A empresa emite MTR Eletrônico para as saídas de materiais?",
+        type=QuestionType.SINGLE_CHOICE,
+        options=(
+            Option(value="sim_100", label="Sim 100%", points=25),
+            Option(value="parcialmente", label="Parcialmente", points=10),
+            Option(value="nao_emite", label="Não emite", points=0),
+        ),
+        scored=True, pillar_id=PILLAR_CL, pillar_weight=25, ems_weight=6.25,
+        objective="Rastreabilidade obrigatória: MTR 100% indica conformidade total.",
+    ),
+    # --------------- Eixo 3 — 2. Caracterização e cadeia de destinação
+    Question(
+        id="esg_q37", code="3.3", number=37, step_id=_ESG, section_id="esg_chain",
+        label="Possui laudos laboratoriais ou caracterizações físico-químicas atualizadas?",
+        type=QuestionType.SINGLE_CHOICE,
+        options=(
+            Option(value="sim_menos_1_ano", label="Sim menos de 1 ano 100%", points=15),
+            Option(value="parcialmente", label="Parcialmente", points=7),
+            Option(value="nao_possui", label="Não possui", points=0),
+        ),
+        scored=True, pillar_id=PILLAR_CL, pillar_weight=15, ems_weight=3.75,
+        objective=(
+            "Due diligence técnico: a indústria receptora exige caracterização do resíduo."
+        ),
+    ),
+    Question(
+        id="esg_q41", code="3.4", number=41, step_id=_ESG, section_id="esg_chain",
+        label=(
+            "Laudos laboratoriais ou caracterizações físico-químicas atualizadas "
+            "(detalhamento)"
+        ),
+        type=QuestionType.LONG_TEXT, required=False,
+        help_text=(
+            "Descreva quais laudos existem, laboratórios responsáveis e parâmetros analisados."
+        ),
+    ),
+    Question(
+        id="esg_q38", code="3.5", number=38, step_id=_ESG, section_id="esg_chain",
+        label="Realiza auditorias ou exige certificações dos transportadores e receptoras?",
+        type=QuestionType.SINGLE_CHOICE,
+        options=(
+            Option(value="homologacao_rigorosa", label="Homologação rigorosa", points=10),
+            Option(value="verificacao_basica", label="Verificação básica", points=5),
+            Option(value="nao_rastreia", label="Não rastreia", points=0),
+        ),
+        scored=True, pillar_id=PILLAR_CL, pillar_weight=10, ems_weight=2.5,
+        objective="Governança da cadeia de destinação.",
+    ),
+    Question(
+        id="esg_q42", code="3.6", number=42, step_id=_ESG, section_id="esg_chain",
+        label="Auditorias ou certificações dos transportadores e receptoras (detalhamento)",
+        type=QuestionType.LONG_TEXT, required=False,
+        help_text="Descreva quais certificações são exigidas e o processo de homologação.",
+    ),
+    # ------------------------------------- Eixo 3 — 3. Histórico regulatório
+    Question(
+        id="esg_q39", code="3.7", number=39, step_id=_ESG, section_id="esg_regulatory",
+        label="Histórico de autos de infração ou pendências jurídicas (últimos 3 anos)?",
+        type=QuestionType.SINGLE_CHOICE,
+        options=(
+            Option(value="nenhum_registro", label="Nenhum registro", points=10),
+            Option(value="notificacoes_aberto", label="Notificações em aberto", points=3),
+            Option(value="prefere_nao_declarar", label="Prefere não declarar", points=0),
+        ),
+        scored=True, pillar_id=PILLAR_CL, pillar_weight=10, ems_weight=2.5,
+        objective="Conformidade histórica.",
+    ),
+    Question(
+        id="esg_q43", code="3.8", number=43, step_id=_ESG, section_id="esg_regulatory",
+        label="Histórico de autos de infração ou pendências jurídicas (detalhamento)",
+        type=QuestionType.LONG_TEXT, required=False,
+        help_text=(
+            "Descreva a natureza das infrações, o status de regularização e as ações "
+            "corretivas."
+        ),
+    ),
+    # --------------------------------------- Eixo 3 — 4. Governança e metas
+    Question(
+        id="esg_q40", code="3.9", number=40, step_id=_ESG, section_id="esg_governance",
+        label="Possui metas corporativas formais de sustentabilidade?",
+        type=QuestionType.SINGLE_CHOICE,
+        options=(
+            Option(value="possui_metas", label="Possui metas formais", points=25),
+            Option(value="nao_possui", label="Não possui", points=5),
+        ),
+        # Aparece no Eixo 3, mas é contabilizada no Pilar 4 (VE).
+        scored=True, pillar_id=PILLAR_VE, pillar_weight=25, ems_weight=5,
+        objective="Metas formais facilitam a decisão de investimento (ROI).",
+    ),
 )
 
 CATALOG = Catalog(
@@ -615,6 +758,7 @@ def get_catalog() -> Catalog:
 __all__ = [
     "CATALOG",
     "CATALOG_VERSION",
+    "AlertLevel",
     "Catalog",
     "Condition",
     "ConditionOperator",

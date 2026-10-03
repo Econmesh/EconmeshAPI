@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import Field
 
 from src.modules.companies.model import CompanyRegistrationStatus
-from src.modules.maturity_diagnostics.engine import EmsScore, Evaluation, PillarScore
+from src.modules.maturity_diagnostics.engine import Alert, EmsScore, Evaluation, PillarScore
 from src.modules.maturity_diagnostics.model import (
     CompanySnapshot,
     DiagnosticStatus,
@@ -135,6 +135,7 @@ class DiagnosticReport(APIModel):
     steps: list[ReportStep]
     pillars: list[ReportPillar]
     ems: EmsScore
+    alerts: list[Alert] = Field(default_factory=list)
     #: Ainda sem régua definida — preenchido quando as faixas forem especificadas.
     maturity_level: str | None = None
     observations: list[str] = Field(default_factory=list)

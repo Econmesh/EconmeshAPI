@@ -479,6 +479,7 @@ class MaturityDiagnosticsService:
             steps=steps,
             pillars=pillars,
             ems=evaluation.ems,
+            alerts=evaluation.alerts,
         )
 
     # --------------------------------------------------------------- helpers

@@ -68,6 +68,12 @@ class EmsScore(BaseModel):
     max_available: float
 
 
+class Alert(BaseModel):
+    question_id: str
+    level: str
+    message: str
+
+
 class Evaluation(BaseModel):
     steps: list[StepProgress]
     progress: int
@@ -77,6 +83,8 @@ class Evaluation(BaseModel):
     ems: EmsScore
     complete: bool
     visible_question_ids: list[str]
+    #: Alertas disparados pelas respostas (ex.: LO vencida = risco crítico).
+    alerts: list[Alert] = []
 
 
 # --------------------------------------------------------------- visibilidade
@@ -251,7 +259,25 @@ def evaluate(catalog: Catalog, values: Mapping[str, AnswerValue]) -> Evaluation:
         if score is not None and question.max_points:
             ems_points += score / question.max_points * weight
 
+    alerts: list[Alert] = []
+    for question in visible:
+        if question.step_id not in available_step_ids:
+            continue
+        value = values.get(question.id)
+        selected = [value] if isinstance(value, str) else (value or [])
+        for item in selected:
+            option = question.option(item) if question.options else None
+            if option is not None and option.alert_level is not None:
+                alerts.append(
+                    Alert(
+                        question_id=question.id,
+                        level=option.alert_level.value,
+                        message=option.alert_message or option.label,
+                    )
+                )
+
     return Evaluation(
+        alerts=alerts,
         steps=steps,
         progress=_percent(required_answered, required_total),
         required_total=required_total,
@@ -264,6 +290,7 @@ def evaluate(catalog: Catalog, values: Mapping[str, AnswerValue]) -> Evaluation:
 
 
 __all__ = [
+    "Alert",
     "AnswerValue",
     "EmsScore",
     "Evaluation",
