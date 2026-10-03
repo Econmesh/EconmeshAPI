@@ -25,6 +25,7 @@ from src.modules.dmc.repository import (
     DmcPortfolioRepository,
 )
 from src.modules.dmc.scope import ScopeService
+from src.modules.maturity_diagnostics.repository import MaturityDiagnosticsRepository
 from src.modules.notifications.repository import UserNotificationsRepository
 from src.modules.opportunities.repository import OpportunitiesRepository
 from src.modules.opportunities.service import OpportunitiesService
@@ -95,6 +96,7 @@ def build_agent_service(db: AsyncDatabase, redis_client: Redis) -> DmcAgentServi
         support_notifications=build_support_notifications(db, redis_client),
         audit=AuditLog(AuditEventsRepository(db)),
         portfolio=DmcPortfolioRepository(db),
+        diagnostics=MaturityDiagnosticsRepository(db),
         notification_realtime=NotificationRealtimePublisher(redis_client),
         support_realtime=SupportRealtimePublisher(redis_client),
     )

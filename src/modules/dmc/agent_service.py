@@ -54,6 +54,7 @@ from src.modules.dmc.schema import (
     DmcTicketSummary,
 )
 from src.modules.dmc.scope import PortfolioScope, ScopeService
+from src.modules.maturity_diagnostics.repository import MaturityDiagnosticsRepository
 from src.modules.notifications.model import (
     NotificationChannel,
     NotificationKind,
@@ -105,10 +106,12 @@ class DmcAgentService:
         support_notifications: SupportNotificationService,
         audit: AuditLog,
         portfolio: DmcPortfolioRepository | None = None,
+        diagnostics: MaturityDiagnosticsRepository | None = None,
         notification_realtime: NotificationRealtimePublisher | None = None,
         support_realtime: SupportRealtimePublisher | None = None,
     ) -> None:
         self._portfolio = portfolio
+        self._diagnostics = diagnostics
         self._auth = auth
         self._companies = companies
         self._scope = scope
@@ -150,6 +153,12 @@ class DmcAgentService:
         )
         conversations_pending = await self._conversations.count_pending_for_agent(agent.id)
         recent = await self._tickets.list_recent_for_agent(agent.id, limit=5)
+        if self._diagnostics is not None:
+            diagnostics_done = await self._diagnostics.count_for_agent(agent.id, open_only=False)
+            diagnostics_pending = await self._diagnostics.count_for_agent(agent.id, open_only=True)
+        else:
+            diagnostics_done = closed
+            diagnostics_pending = pending + in_progress
         indicators = [
             DmcIndicator(key="companies_managed", label="Empresas gerenciadas", value=len(scope.links)),
             DmcIndicator(key="companies_registered", label="Empresas cadastradas", value=registered),
@@ -160,11 +169,13 @@ class DmcAgentService:
                 label="Solicitações DMC em atendimento",
                 value=in_progress,
             ),
-            DmcIndicator(key="diagnostics_done", label="Diagnósticos realizados", value=closed),
+            DmcIndicator(
+                key="diagnostics_done", label="Diagnósticos realizados", value=diagnostics_done
+            ),
             DmcIndicator(
                 key="diagnostics_pending",
-                label="Diagnósticos pendentes",
-                value=pending + in_progress,
+                label="Diagnósticos em andamento",
+                value=diagnostics_pending,
             ),
             DmcIndicator(
                 key="conversations_pending",

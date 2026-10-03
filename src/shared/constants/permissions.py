@@ -20,6 +20,7 @@ class Permission(StrEnum):
     COMPANIES_READ = "companies.read"
     COMPANIES_SEARCH = "companies.search"
     COMPANIES_PRE_REGISTER = "companies.pre_register"
+    DIAGNOSTICS_MANAGE = "diagnostics.manage"
     OPPORTUNITIES_READ = "opportunities.read"
     OPPORTUNITIES_WRITE = "opportunities.write"
     DMC_CONVERSATIONS_READ = "dmc_conversations.read"
@@ -41,6 +42,7 @@ _DMC_AGENT_PERMISSIONS: frozenset[Permission] = frozenset(
         Permission.COMPANIES_READ,
         Permission.COMPANIES_SEARCH,
         Permission.COMPANIES_PRE_REGISTER,
+        Permission.DIAGNOSTICS_MANAGE,
         Permission.OPPORTUNITIES_READ,
         Permission.DMC_CONVERSATIONS_READ,
         Permission.DMC_CONVERSATIONS_SEND,

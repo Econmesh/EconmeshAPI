@@ -25,6 +25,7 @@ from src.modules.dmc.repository import (
     DmcNotificationBatchesRepository,
     DmcPortfolioRepository,
 )
+from src.modules.maturity_diagnostics.repository import MaturityDiagnosticsRepository
 from src.modules.notifications.repository import (
     NotificationCampaignsRepository,
     NotificationGroupsRepository,
@@ -81,6 +82,7 @@ async def _main() -> None:
         await DmcConversationMessagesRepository(mongo.db).ensure_indexes()
         await DmcNotificationBatchesRepository(mongo.db).ensure_indexes()
         await AuditEventsRepository(mongo.db).ensure_indexes()
+        await MaturityDiagnosticsRepository(mongo.db).ensure_indexes()
         logger.info("indexes_done")
     finally:
         await mongo.close()
