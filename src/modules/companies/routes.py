@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 
+from src.core.exceptions import RateLimitError
 from src.modules.auth.repository import AuthRepository
 from src.modules.companies.controller import CompaniesController
 from src.modules.companies.repository import CompaniesRepository
@@ -16,6 +17,8 @@ from src.modules.companies.schema import (
     CompanyUpdate,
     LogoPresignRequest,
     LogoPresignResponse,
+    PreRegistrationMatchList,
+    PreRegistrationPrefill,
 )
 from src.modules.companies.service import CompaniesService
 from src.modules.companies.compliance_review import build_compliance_review_service
@@ -45,6 +48,56 @@ def _build_controller(
 
 
 ControllerDep = Annotated[CompaniesController, Depends(_build_controller)]
+
+# Public pre-registration lookup: per-IP fixed window to slow down enumeration.
+_PRE_REGISTRATION_RATE_LIMIT = 30
+_PRE_REGISTRATION_RATE_WINDOW_SECONDS = 60
+
+
+async def _pre_registration_rate_limit(
+    request: Request,
+    redis_client: Annotated["Redis", Depends(get_redis)],
+) -> None:
+    forwarded = request.headers.get("x-forwarded-for")
+    ip = (
+        forwarded.split(",")[0].strip()
+        if forwarded
+        else (request.client.host if request.client else "unknown")
+    )
+    key = f"rl:companies:pre_registrations:{ip}"
+    count = await redis_client.incr(key)
+    if count == 1:
+        await redis_client.expire(key, _PRE_REGISTRATION_RATE_WINDOW_SECONDS)
+    if count > _PRE_REGISTRATION_RATE_LIMIT:
+        raise RateLimitError()
+
+
+@router.get(
+    "/pre-registrations/search",
+    response_model=PreRegistrationMatchList,
+    summary="Public: find pre-registered companies by razão social, nome fantasia or CNPJ.",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_pre_registration_rate_limit)],
+)
+async def search_pre_registrations(
+    controller: ControllerDep,
+    q: str = Query(default="", max_length=200),
+) -> PreRegistrationMatchList:
+    return await controller.search_pre_registrations(q)
+
+
+@router.get(
+    "/pre-registrations/{company_id}",
+    response_model=PreRegistrationPrefill,
+    summary="Public: data used to prefill the signup form from a pre-registration.",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(_pre_registration_rate_limit)],
+)
+async def get_pre_registration(
+    company_id: UUID,
+    controller: ControllerDep,
+) -> PreRegistrationPrefill:
+    return await controller.get_pre_registration(company_id)
 
 
 @router.get(

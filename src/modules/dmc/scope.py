@@ -68,7 +68,8 @@ class ScopeService:
         profiles = await self._users.list_by_company_ids(list(active))
         user_company: dict[UUID, UUID] = {}
         for company in active.values():
-            user_company[company.owner_user_id] = company.id
+            if company.owner_user_id is not None:
+                user_company[company.owner_user_id] = company.id
         for profile in profiles:
             if profile.company_id in active and profile.user_id not in user_company:
                 user_company[profile.user_id] = profile.company_id

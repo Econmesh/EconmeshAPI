@@ -94,6 +94,7 @@ def build_agent_service(db: AsyncDatabase, redis_client: Redis) -> DmcAgentServi
         opportunities=opportunities,
         support_notifications=build_support_notifications(db, redis_client),
         audit=AuditLog(AuditEventsRepository(db)),
+        portfolio=DmcPortfolioRepository(db),
         notification_realtime=NotificationRealtimePublisher(redis_client),
         support_realtime=SupportRealtimePublisher(redis_client),
     )

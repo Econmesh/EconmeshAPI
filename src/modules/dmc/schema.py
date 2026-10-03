@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import Field
 
+from src.modules.companies.model import CompanyRegistrationStatus
+from src.modules.companies.schema import CompanyAddressResponse
 from src.modules.dmc.model import DmcConversationAuthorRole, PortfolioSource
 from src.modules.platform_settings.model import DmcAssignmentMode
 from src.modules.support.model import SupportTicketStatus
@@ -50,6 +52,7 @@ class DmcCompanyPublic(APIModel):
     state: str | None = None
     sector: str | None = None
     in_portfolio: bool
+    registration_status: CompanyRegistrationStatus = CompanyRegistrationStatus.COMPLETE
 
 
 class DmcCompanyDetail(DmcCompanyPublic):
@@ -58,6 +61,7 @@ class DmcCompanyDetail(DmcCompanyPublic):
     website: str | None = None
     description: str | None = None
     legal_representative: str | None = None
+    address: CompanyAddressResponse | None = None
     source: PortfolioSource | None = None
     owner_user_id: UUID | None = None
     owner_name: str | None = None

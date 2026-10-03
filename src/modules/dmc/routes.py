@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 
+from src.modules.companies.schema import PreRegistrationCreate, PreRegistrationUpdate
 from src.modules.dmc.agent_service import DmcAgentService
 from src.modules.dmc.deps import build_agent_service
 from src.modules.dmc.schema import (
@@ -96,6 +97,36 @@ async def search_companies(
     q: str = Query(default="", max_length=200),
 ) -> DmcCompanySearchResponse:
     return await service.search_companies(current_user.uid, q)
+
+
+@router.post(
+    "/companies/pre-registrations",
+    response_model=DmcCompanyDetail,
+    status_code=status.HTTP_201_CREATED,
+    summary="Pré-cadastro de empresa (sem usuário/login), incluída na carteira do agente.",
+    dependencies=[Depends(require_permission(Permission.COMPANIES_PRE_REGISTER))],
+)
+async def pre_register_company(
+    payload: PreRegistrationCreate,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+) -> DmcCompanyDetail:
+    return await service.pre_register_company(current_user.uid, payload)
+
+
+@router.patch(
+    "/companies/{company_id}/pre-registration",
+    response_model=DmcCompanyDetail,
+    summary="Editar um pré-cadastro da carteira (antes de o responsável concluir o cadastro).",
+    dependencies=[Depends(require_permission(Permission.COMPANIES_PRE_REGISTER))],
+)
+async def update_pre_registration(
+    company_id: UUID,
+    payload: PreRegistrationUpdate,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+) -> DmcCompanyDetail:
+    return await service.update_pre_registration(current_user.uid, company_id, payload)
 
 
 @router.get(

@@ -12,6 +12,8 @@ from src.modules.companies.schema import (
     CompanyUpdate,
     LogoPresignRequest,
     LogoPresignResponse,
+    PreRegistrationMatchList,
+    PreRegistrationPrefill,
 )
 from src.modules.companies.service import CompaniesService
 from src.shared.dependencies.auth import CurrentUser
@@ -28,6 +30,12 @@ class CompaniesController:
         return await self._service.list(
             firebase_uid=current_user.uid, page=page, page_size=page_size
         )
+
+    async def search_pre_registrations(self, q: str) -> PreRegistrationMatchList:
+        return await self._service.search_pre_registrations(q)
+
+    async def get_pre_registration(self, company_id: UUID) -> PreRegistrationPrefill:
+        return await self._service.get_pre_registration_prefill(company_id)
 
     async def get(self, company_id: UUID, current_user: CurrentUser) -> CompanyResponse:
         return await self._service.get(company_id, firebase_uid=current_user.uid)

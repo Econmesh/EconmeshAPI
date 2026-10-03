@@ -39,6 +39,8 @@ class AuditAction(StrEnum):
     NOTIFICATION_SENT = "dmc_notification.sent"
     QUEUE_REORDERED = "dmc_queue.reordered"
     ASSIGNMENT_MODE_CHANGED = "dmc_assignment_mode.changed"
+    COMPANY_PRE_REGISTERED = "company.pre_registered"
+    COMPANY_PRE_REGISTRATION_UPDATED = "company.pre_registration_updated"
 
 
 class DmcAgentDocument(DomainDocument):

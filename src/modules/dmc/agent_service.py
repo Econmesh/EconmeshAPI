@@ -4,13 +4,22 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from src.core.exceptions import ForbiddenError, NotFoundError, ValidationAppError
+from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationAppError
 from src.infrastructure.realtime.redis_pubsub import NotificationRealtimePublisher
 from src.infrastructure.realtime.support_pubsub import SupportRealtimePublisher
 from src.modules.auth.model import UserDocument
 from src.modules.auth.repository import AuthRepository
-from src.modules.companies.model import CompanyDocument
+from src.modules.companies.model import (
+    CompanyAddress,
+    CompanyDocument,
+    CompanyRegistrationStatus,
+)
 from src.modules.companies.repository import CompaniesRepository
+from src.modules.companies.schema import (
+    CompanyAddressResponse,
+    PreRegistrationCreate,
+    PreRegistrationUpdate,
+)
 from src.modules.dmc.audit import AuditLog
 from src.modules.dmc.model import (
     AuditAction,
@@ -18,10 +27,12 @@ from src.modules.dmc.model import (
     DmcConversationDocument,
     DmcConversationMessageDocument,
     DmcNotificationBatchDocument,
+    DmcPortfolioLinkDocument,
     PortfolioSource,
 )
 from src.modules.dmc.repository import (
     DmcConversationMessagesRepository,
+    DmcPortfolioRepository,
     DmcConversationsRepository,
     DmcNotificationBatchesRepository,
 )
@@ -93,9 +104,11 @@ class DmcAgentService:
         opportunities: OpportunitiesService,
         support_notifications: SupportNotificationService,
         audit: AuditLog,
+        portfolio: DmcPortfolioRepository | None = None,
         notification_realtime: NotificationRealtimePublisher | None = None,
         support_realtime: SupportRealtimePublisher | None = None,
     ) -> None:
+        self._portfolio = portfolio
         self._auth = auth
         self._companies = companies
         self._scope = scope
@@ -185,7 +198,7 @@ class DmcAgentService:
     ) -> DmcCompanySearchResponse:
         agent = await self._agent(firebase_uid)
         scope = await self._scope.for_agent(agent.id)
-        found = await self._companies.search(q, limit=20)
+        found = await self._companies.search(q, limit=20, include_pre_registered=True)
         items = [
             _company_public(company, in_portfolio=company.id in scope.company_ids)
             for company in found
@@ -208,6 +221,118 @@ class DmcAgentService:
             in_portfolio=True,
             source=link.source,
             owner_name=owners.get(company.owner_user_id),
+        )
+
+    async def pre_register_company(
+        self, firebase_uid: str, payload: PreRegistrationCreate
+    ) -> DmcCompanyDetail:
+        """Create a company without owner/login and add it to the agent portfolio."""
+        if self._portfolio is None:
+            raise RuntimeError("DmcPortfolioRepository is not configured.")
+        agent = await self._agent(firebase_uid)
+        existing = await self._companies.get_by_tax_id(payload.country, payload.tax_id)
+        if existing is not None:
+            raise ConflictError(
+                "A company with this tax ID already exists.",
+                code="tax_id_exists",
+            )
+
+        address = (
+            CompanyAddress.model_validate(payload.address.model_dump())
+            if payload.address is not None
+            else None
+        )
+        company = await self._companies.create(
+            CompanyDocument(
+                owner_user_id=None,
+                registration_status=CompanyRegistrationStatus.PRE_REGISTERED,
+                legal_name=payload.legal_name,
+                trade_name=payload.trade_name,
+                tax_id=payload.tax_id,
+                email=payload.email,
+                phone=payload.phone,
+                legal_representative=payload.legal_representative,
+                address=address,
+                country=payload.country,
+                website=payload.website,
+                description=payload.description,
+                sector=payload.sector,
+            )
+        )
+        try:
+            await self._portfolio.create(
+                DmcPortfolioLinkDocument(
+                    agent_user_id=agent.id,
+                    company_id=company.id,
+                    source=PortfolioSource.REGISTERED,
+                    linked_by=agent.id,
+                )
+            )
+        except Exception:
+            await self._companies.hard_delete(company.id)
+            raise
+        await self._audit.record(
+            AuditAction.COMPANY_PRE_REGISTERED,
+            resource_type="company",
+            resource_id=company.id,
+            actor_user_id=agent.id,
+            after={
+                "legal_name": company.legal_name,
+                "tax_id": company.tax_id,
+                "registration_status": company.registration_status,
+            },
+        )
+        return _company_detail(
+            company,
+            in_portfolio=True,
+            source=PortfolioSource.REGISTERED,
+            owner_name=None,
+        )
+
+    async def update_pre_registration(
+        self, firebase_uid: str, company_id: UUID, payload: PreRegistrationUpdate
+    ) -> DmcCompanyDetail:
+        agent = await self._agent(firebase_uid)
+        scope = await self._scope.for_agent(agent.id)
+        company = scope.require_company(company_id)
+        if company.registration_status != CompanyRegistrationStatus.PRE_REGISTERED:
+            raise ConflictError(
+                "Only pre-registered companies can be edited by a DMC agent.",
+                code="not_pre_registered",
+            )
+        patch = payload.model_dump(exclude_unset=True)
+        if not patch:
+            raise ValidationAppError("Nothing to update.", code="empty_update")
+        if "legal_name" in patch and patch["legal_name"] is None:
+            raise ValidationAppError("legal_name is required.", code="legal_name_required")
+        if patch.get("tax_id") and patch["tax_id"] != company.tax_id:
+            clash = await self._companies.get_by_tax_id(company.country, patch["tax_id"])
+            if clash is not None:
+                raise ConflictError(
+                    "A company with this tax ID already exists.",
+                    code="tax_id_exists",
+                )
+        elif "tax_id" in patch:
+            patch.pop("tax_id")
+        if "address" in patch and patch["address"] is not None:
+            patch["address"] = CompanyAddress.model_validate(patch["address"]).model_dump()
+        updated = await self._companies.update(company_id, patch)
+        if updated is None:
+            raise NotFoundError("Company not found.")
+        await self._audit.record(
+            AuditAction.COMPANY_PRE_REGISTRATION_UPDATED,
+            resource_type="company",
+            resource_id=company_id,
+            actor_user_id=agent.id,
+            before={key: value for key, value in company.model_dump().items() if key in patch},
+            after=patch,
+        )
+        link = next((item for item in scope.links if item.company_id == company_id), None)
+        return _company_detail(
+            updated,
+            in_portfolio=True,
+            source=link.source if link else None,
+            owner_name=None,
         )
 
     async def list_company_users(
@@ -663,7 +788,11 @@ class DmcAgentService:
         ]
 
     async def _owner_names(self, companies: object) -> dict[UUID, str | None]:
-        ids = [company.owner_user_id for company in companies]  # type: ignore[attr-defined]
+        ids = [
+            company.owner_user_id  # type: ignore[attr-defined]
+            for company in companies  # type: ignore[attr-defined]
+            if company.owner_user_id is not None  # type: ignore[attr-defined]
+        ]
         users = await self._auth.get_by_ids(ids)
         return {user.id: (user.name or user.email) for user in users}
 
@@ -713,6 +842,7 @@ def _company_public(company: CompanyDocument, *, in_portfolio: bool) -> DmcCompa
         state=address.state if address else None,
         sector=company.sector,
         in_portfolio=in_portfolio,
+        registration_status=company.registration_status,
     )
 
 
@@ -731,6 +861,11 @@ def _company_detail(
         website=company.website,
         description=company.description,
         legal_representative=company.legal_representative,
+        address=(
+            CompanyAddressResponse.model_validate(company.address.model_dump())
+            if company.address is not None
+            else None
+        ),
         source=source,
         owner_user_id=company.owner_user_id,
         owner_name=owner_name,

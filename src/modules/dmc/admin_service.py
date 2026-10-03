@@ -147,7 +147,11 @@ class DmcAdminService:
             raise NotFoundError("DMC agent not found.")
         scope = await self._scope.for_agent(agent_user_id)
         owners = await self._auth.get_by_ids(
-            [company.owner_user_id for company in scope.companies.values()]
+            [
+                company.owner_user_id
+                for company in scope.companies.values()
+                if company.owner_user_id is not None
+            ]
         )
         owner_names = {user.id: (user.name or user.email) for user in owners}
         companies = [
@@ -210,7 +214,11 @@ class DmcAdminService:
             actor_user_id=actor.id,
             after={"agent_user_id": agent_user_id, "source": source},
         )
-        owner = await self._auth.get_by_id(company.owner_user_id)
+        owner = (
+            await self._auth.get_by_id(company.owner_user_id)
+            if company.owner_user_id is not None
+            else None
+        )
         return _company_detail(
             company,
             in_portfolio=True,

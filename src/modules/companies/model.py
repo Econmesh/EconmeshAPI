@@ -18,6 +18,11 @@ class ComplianceDocumentStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class CompanyRegistrationStatus(StrEnum):
+    PRE_REGISTERED = "pre_registered"
+    COMPLETE = "complete"
+
+
 class CompanyAddress(BaseModel):
     """Structured postal address for a company."""
 
@@ -46,11 +51,14 @@ class CompanyComplianceFile(BaseModel):
 
 
 class CompanyDocument(DomainDocument):
-    """A company / legal entity owned by a platform user."""
+    """A company / legal entity, optionally owned by a platform user."""
 
     collection_name: ClassVar[str] = "companies"
 
-    owner_user_id: UUID = Field(..., description="FK to users._id — creator/owner.")
+    owner_user_id: UUID | None = Field(
+        default=None, description="FK to users._id — creator/owner. Null for pre-registration."
+    )
+    registration_status: CompanyRegistrationStatus = CompanyRegistrationStatus.COMPLETE
     legal_name: str
     trade_name: str | None = None
     tax_id: str = Field(..., description="CNPJ / VAT / EIN — country-specific.")
@@ -79,9 +87,21 @@ class CompanyDocument(DomainDocument):
     is_active: bool = True
 
 
+def is_pre_registered(company: CompanyDocument | None) -> bool:
+    """True for an active pre-registration not yet claimed by a user."""
+    return (
+        company is not None
+        and company.is_active
+        and company.owner_user_id is None
+        and company.registration_status == CompanyRegistrationStatus.PRE_REGISTERED
+    )
+
+
 __all__ = [
     "CompanyAddress",
     "CompanyComplianceFile",
     "CompanyDocument",
+    "CompanyRegistrationStatus",
     "ComplianceDocumentStatus",
+    "is_pre_registered",
 ]
