@@ -21,6 +21,8 @@ from src.modules.maturity_diagnostics.schema import (
     DiagnosticCreate,
     DiagnosticDetail,
     DiagnosticListResponse,
+    ItemCreate,
+    ItemUpdate,
     SaveResponsesRequest,
 )
 from src.modules.maturity_diagnostics.service import MaturityDiagnosticsService
@@ -128,6 +130,50 @@ async def save_responses(
     current_user: CurrentUserDep,
 ) -> DiagnosticDetail:
     return await service.save_responses(current_user.uid, diagnostic_id, payload)
+
+
+@router.post(
+    "/{diagnostic_id}/items",
+    response_model=DiagnosticDetail,
+    status_code=status.HTTP_201_CREATED,
+    summary="Cadastra um produto (1.1) ou resíduo (1.7) do diagnóstico.",
+)
+async def add_item(
+    diagnostic_id: UUID,
+    payload: ItemCreate,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+) -> DiagnosticDetail:
+    return await service.add_item(current_user.uid, diagnostic_id, payload)
+
+
+@router.patch(
+    "/{diagnostic_id}/items/{item_id}",
+    response_model=DiagnosticDetail,
+    summary="Edita nome/descrição de um produto ou resíduo.",
+)
+async def update_item(
+    diagnostic_id: UUID,
+    item_id: str,
+    payload: ItemUpdate,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+) -> DiagnosticDetail:
+    return await service.update_item(current_user.uid, diagnostic_id, item_id, payload)
+
+
+@router.delete(
+    "/{diagnostic_id}/items/{item_id}",
+    response_model=DiagnosticDetail,
+    summary="Exclui um produto ou resíduo e todas as respostas vinculadas a ele.",
+)
+async def delete_item(
+    diagnostic_id: UUID,
+    item_id: str,
+    service: ServiceDep,
+    current_user: CurrentUserDep,
+) -> DiagnosticDetail:
+    return await service.delete_item(current_user.uid, diagnostic_id, item_id)
 
 
 @router.post(

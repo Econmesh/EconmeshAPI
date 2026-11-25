@@ -8,6 +8,7 @@ from uuid import UUID
 from pydantic import Field
 
 from src.modules.companies.model import CompanyRegistrationStatus
+from src.modules.maturity_diagnostics.catalog import ItemKind
 from src.modules.maturity_diagnostics.engine import Evaluation
 from src.modules.maturity_diagnostics.model import (
     CompanySnapshot,
@@ -27,6 +28,26 @@ class AnswerInput(APIModel):
     #: Momento em que o usuário editou (salvamento offline). Respostas mais
     #: antigas do que a gravada no servidor são ignoradas.
     edited_at: datetime | None = None
+
+
+class ItemCreate(APIModel):
+    kind: ItemKind
+    name: str = Field(..., min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+class ItemUpdate(APIModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+class ItemOut(APIModel):
+    id: str
+    kind: ItemKind
+    name: str
+    description: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class SaveResponsesRequest(APIModel):
@@ -63,7 +84,10 @@ class DiagnosticDetail(DiagnosticSummary):
     catalog_version: str
     company: CompanySnapshot
     agent_name: str | None = None
+    #: Chave = id da pergunta ou ``"<pergunta>@<item>"`` para perguntas por item.
     responses: dict[str, ResponseOut]
+    #: Produtos e resíduos cadastrados.
+    items: list[ItemOut] = Field(default_factory=list)
     evaluation: Evaluation
     can_edit: bool
 
@@ -101,6 +125,9 @@ __all__ = [
     "DiagnosticDetail",
     "DiagnosticListResponse",
     "DiagnosticSummary",
+    "ItemCreate",
+    "ItemOut",
+    "ItemUpdate",
     "ResponseOut",
     "SaveResponsesRequest",
 ]

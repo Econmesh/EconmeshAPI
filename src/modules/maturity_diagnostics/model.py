@@ -9,6 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from src.modules.maturity_diagnostics.catalog import ItemKind
 from src.shared.schemas.base import DomainDocument
 from src.shared.utils.time import utcnow
 
@@ -45,6 +46,21 @@ class DiagnosticResponse(BaseModel):
     updated_by: UUID | None = None
 
 
+class DiagnosticItem(BaseModel):
+    """Produto (pergunta 1.1) ou resíduo (pergunta 1.7) cadastrado no diagnóstico.
+
+    As respostas por item ficam em ``responses["<pergunta>@<id>"]``; excluir o
+    item remove todas elas (sem registros órfãos).
+    """
+
+    id: str
+    kind: ItemKind
+    name: str
+    description: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class CompanySnapshot(BaseModel):
     legal_name: str
     trade_name: str | None = None
@@ -65,6 +81,8 @@ class MaturityDiagnosticDocument(DomainDocument):
     progress: int = 0
     current_step: str | None = None
     responses: dict[str, DiagnosticResponse] = Field(default_factory=dict)
+    #: Produtos e resíduos cadastrados (ordem de cadastro).
+    items: list[DiagnosticItem] = Field(default_factory=list)
     #: Cache do último cálculo (progresso por etapa, pilares, EMS).
     evaluation: dict[str, Any] | None = None
     company_snapshot: CompanySnapshot
@@ -81,10 +99,14 @@ class MaturityDiagnosticDocument(DomainDocument):
     def answer_values(self) -> dict[str, str | list[str] | None]:
         return {qid: resp.value for qid, resp in self.responses.items()}
 
+    def item(self, item_id: str) -> DiagnosticItem | None:
+        return next((item for item in self.items if item.id == item_id), None)
+
 
 __all__ = [
     "OPEN_STATUSES",
     "CompanySnapshot",
+    "DiagnosticItem",
     "DiagnosticResponse",
     "DiagnosticStatus",
     "MaturityDiagnosticDocument",

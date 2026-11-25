@@ -15,9 +15,9 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict
 
 #: Versão das regras de cálculo + interpretação. Mudou a regra → nova versão.
-METHODOLOGY_VERSION = "2026.10-1"
+METHODOLOGY_VERSION = "2026.11-1"
 #: Versão do formato do relatório gerado (estrutura de dados / layout).
-REPORT_VERSION = "1.0"
+REPORT_VERSION = "2.0"
 
 
 class _Frozen(BaseModel):
@@ -79,7 +79,7 @@ TIER_HIGH_MIN_RATIO = 0.75
 TIER_MEDIUM_MIN_RATIO = 0.40
 
 
-def tier_for(points: int, max_points: int) -> Tier:
+def tier_for(points: float, max_points: int) -> Tier:
     ratio = points / max_points if max_points else 0.0
     if ratio >= TIER_HIGH_MIN_RATIO:
         return Tier.HIGH
@@ -505,6 +505,9 @@ METHODOLOGY_SCORING = (
     "pontos máximos da pergunta × peso no EMS. O score geral é a soma dessas contribuições.",
     "Perguntas não pontuadas registram o contexto da empresa e são usadas na leitura "
     "qualitativa do relatório, sem alterar o score.",
+    "Perguntas respondidas por produto ou por resíduo entram no cálculo pela média dos "
+    "pontos dos itens cadastrados. O relatório apresenta também o pior caso (menor "
+    "pontuação entre os itens) como leitura conservadora, sem alterar o score geral.",
 )
 
 METHODOLOGY_RESULTS = (

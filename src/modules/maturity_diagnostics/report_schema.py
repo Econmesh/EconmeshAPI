@@ -66,6 +66,9 @@ class ReportSummary(APIModel):
     maturity_level: MaturityLevelOut | None = None
     maturity_scale_defined: bool
     headline: str
+    #: Score considerando o pior item de cada pergunta (produtos/resíduos).
+    worst_case_score: float | None = None
+    worst_case_percent: float | None = None
 
 
 class ReportAxis(APIModel):
@@ -77,7 +80,7 @@ class ReportAxis(APIModel):
     #: ``evaluated`` | ``maintenance``
     status: str
     percent: float | None = None
-    points: int = 0
+    points: float = 0
     max_points: int = 0
     ems_points: float = 0.0
     ems_max: float = 0.0
@@ -90,7 +93,7 @@ class ReportPillar(APIModel):
     code: str
     name: str
     ems_weight: float | None = None
-    points: int
+    points: float
     max_points: int
     percent: float | None = None
     ems_points: float
@@ -98,6 +101,19 @@ class ReportPillar(APIModel):
     answered: int
     total: int
     reading: str | None = None
+    #: Mesmo pilar considerando o pior item de cada pergunta.
+    worst_points: float | None = None
+    worst_ems_points: float | None = None
+
+
+class ReportIndicatorItem(APIModel):
+    """Resposta de um item (produto/resíduo) a um indicador por item."""
+
+    item_id: str
+    item_name: str
+    answer: str | None = None
+    points: int | None = None
+    tier: str = "unanswered"
 
 
 class ReportIndicator(APIModel):
@@ -108,7 +124,8 @@ class ReportIndicator(APIModel):
     step_id: str
     pillar_id: str | None = None
     answer: str | None = None
-    points: int | None = None
+    #: Pergunta por item: média dos itens (base do score).
+    points: float | None = None
     max_points: int
     percent: float | None = None
     pillar_weight: float | None = None
@@ -117,6 +134,10 @@ class ReportIndicator(APIModel):
     #: ``high`` | ``medium`` | ``low`` | ``unanswered``
     tier: str
     interpretation: str | None = None
+    per_item: bool = False
+    #: Menor pontuação entre os itens.
+    worst_points: int | None = None
+    items: list[ReportIndicatorItem] = Field(default_factory=list)
 
 
 class ReportFinding(APIModel):
@@ -170,7 +191,7 @@ class ReportAnswerItem(APIModel):
     answer: str | None = None
     source: ResponseSource | None = None
     scored: bool = False
-    points: int | None = None
+    points: float | None = None
     max_points: int | None = None
     pillar_code: str | None = None
 
@@ -178,6 +199,25 @@ class ReportAnswerItem(APIModel):
 class ReportAnswerSection(APIModel):
     title: str
     answers: list[ReportAnswerItem]
+    #: Seção respondida para um produto/resíduo específico.
+    item_id: str | None = None
+    item_name: str | None = None
+    item_kind: str | None = None
+
+
+class ReportItem(APIModel):
+    """Produto ou resíduo cadastrado, com todas as respostas vinculadas a ele."""
+
+    id: str
+    kind: str
+    kind_label: str
+    name: str
+    description: str | None = None
+    #: Seções (por eixo) com as respostas do item, na ordem do formulário.
+    sections: list[ReportAnswerSection] = Field(default_factory=list)
+    #: Pontos obtidos / máximos nos indicadores pontuados do item.
+    points: int = 0
+    max_points: int = 0
 
 
 class ReportAnswerStep(APIModel):
@@ -211,6 +251,9 @@ class MaturityReport(APIModel):
     scope: ReportScope
     methodology: ReportMethodology
     answers: list[ReportAnswerStep]
+    #: Produtos (1.1) e resíduos (1.7) com as avaliações individuais.
+    products: list[ReportItem] = Field(default_factory=list)
+    wastes: list[ReportItem] = Field(default_factory=list)
 
 
 __all__ = [
@@ -225,6 +268,8 @@ __all__ = [
     "ReportField",
     "ReportFinding",
     "ReportIndicator",
+    "ReportIndicatorItem",
+    "ReportItem",
     "ReportMethodology",
     "ReportMethodologyItem",
     "ReportOpportunity",

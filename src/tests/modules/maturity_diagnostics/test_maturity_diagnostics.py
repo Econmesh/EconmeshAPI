@@ -25,6 +25,7 @@ from src.modules.maturity_diagnostics.catalog import (
     STEP_ESG,
     STEP_MATERIAL_FLOWS,
     STEP_SYMBIOSIS,
+    ItemKind,
     StepAvailability,
 )
 from src.modules.maturity_diagnostics.engine import (
@@ -32,9 +33,11 @@ from src.modules.maturity_diagnostics.engine import (
     StepStatus,
     evaluate,
     normalize_answer,
+    response_key,
     visible_questions,
 )
 from src.modules.maturity_diagnostics.model import (
+    DiagnosticItem,
     DiagnosticResponse,
     DiagnosticStatus,
     MaturityDiagnosticDocument,
@@ -59,12 +62,18 @@ IDENTIFICATION_ANSWERS = {
     "q07": "maria@reciclasul.com.br",
     "q08": "51999990000",
 }
-AXIS1_ANSWERS = {
-    "q09": "Embalagens",
-    "q10": "PEAD 10 t/mês",
-    "q11": "nao",
-    "q13": "parcialmente",
-    "q14": "Aparas 2 t/mês",
+PRODUCT = DiagnosticItem(id="prod00000001", kind=ItemKind.PRODUCT, name="Embalagens")
+WASTE = DiagnosticItem(id="resid0000001", kind=ItemKind.WASTE, name="Aparas")
+ITEMS = [PRODUCT, WASTE]
+
+
+def per_item(answers: dict[str, object], item: DiagnosticItem) -> dict[str, object]:
+    return {response_key(qid, item.id): value for qid, value in answers.items()}
+
+
+#: Eixo 1 — por produto (1.2–1.6) e por resíduo (1.8–1.15).
+PRODUCT_AXIS1 = {"q10": "PEAD 10 t/mês", "q11": "nao", "q13": "parcialmente", "q37": "entre_2_5"}
+WASTE_AXIS1 = {
     "q15": "nao_perigosos",
     "q16": "diaria",
     "q17": "nao",
@@ -72,13 +81,24 @@ AXIS1_ANSWERS = {
     "q28": "excelente",
     "q29": "classe_iia",
     "q31": "sazonal",
-    "q37": "entre_2_5",
+}
+#: Formato anterior (1.1 e 1.7 em texto livre, respostas únicas por empresa).
+LEGACY_AXIS1_ANSWERS = {
+    "q09": "Embalagens",
+    "q14": "Aparas 2 t/mês",
+    **PRODUCT_AXIS1,
+    **WASTE_AXIS1,
     "q43": "planilhas",
 }
+AXIS1_ANSWERS = {
+    **per_item(PRODUCT_AXIS1, PRODUCT),
+    **per_item(WASTE_AXIS1, WASTE),
+    "q43": "planilhas",
+}
+PRODUCT_AXIS2 = {"ps_q25": "coprocessamento_reciclagem", "ps_q26": "nao", "ps_q28": "media"}
+WASTE_AXIS4 = {"ve_q44": "alto", "ve_q45": "10001_50000"}
 AXIS2_ANSWERS = {
-    "ps_q25": "coprocessamento_reciclagem",
-    "ps_q26": "nao",
-    "ps_q28": "media",
+    **per_item(PRODUCT_AXIS2, PRODUCT),
     "ps_q29": "sim",
     "ps_q30": ["energia"],
     "ps_q31": "talvez",
@@ -94,8 +114,20 @@ AXIS3_ANSWERS = {
     "esg_q40": "nao_possui",
 }
 AXIS4_ANSWERS = {
-    "ve_q44": "alto",
-    "ve_q45": "10001_50000",
+    **per_item(WASTE_AXIS4, WASTE),
+    "ve_q46": "apenas_custo_zero",
+}
+LEGACY_ALL_ANSWERS = {
+    **IDENTIFICATION_ANSWERS,
+    **LEGACY_AXIS1_ANSWERS,
+    **PRODUCT_AXIS2,
+    "ps_q29": "sim",
+    "ps_q30": ["energia"],
+    "ps_q31": "talvez",
+    "ps_q32": ["vender_residuos", "simbiose_industrial"],
+    "ps_q33": "nao",
+    **AXIS3_ANSWERS,
+    **WASTE_AXIS4,
     "ve_q46": "apenas_custo_zero",
 }
 ALL_ANSWERS = {
@@ -165,9 +197,10 @@ def test_axis_2_questions_match_specification() -> None:
 
 
 def test_axis_2_conditionals() -> None:
-    ids = lambda values: {q.id for q in visible_questions(CATALOG, values)}  # noqa: E731
-    assert "ps_q27" not in ids({"ps_q26": "nao"})
-    assert "ps_q27" in ids({"ps_q26": "sim"})
+    ids = lambda values: {q.id for q in visible_questions(CATALOG, values, ITEMS)}  # noqa: E731
+    key = lambda qid: response_key(qid, PRODUCT.id)  # noqa: E731
+    assert "ps_q27" not in ids({key("ps_q26"): "nao"})
+    assert "ps_q27" in ids({key("ps_q26"): "sim"})
     assert "ps_q30" not in ids({"ps_q29": "nao"})
     assert "ps_q30" in ids({"ps_q29": "sim"})
 
@@ -215,7 +248,9 @@ def test_axis_3_questions_match_specification() -> None:
 
 
 def test_expired_operating_license_raises_critical_alert() -> None:
-    evaluation = evaluate(CATALOG, {**ALL_ANSWERS, "esg_q35": "vencida_inexistente"})
+    evaluation = evaluate(
+        CATALOG, {**ALL_ANSWERS, "esg_q35": "vencida_inexistente"}, items=ITEMS
+    )
     assert len(evaluation.alerts) == 1
     alert = evaluation.alerts[0]
     assert (alert.question_id, alert.level) == ("esg_q35", "critical")
@@ -292,38 +327,40 @@ def test_dmc_agent_has_diagnostics_permission() -> None:
 
 # ---------------------------------------------------------------- condicionais
 def test_conditional_questions() -> None:
-    ids = lambda values: {q.id for q in visible_questions(CATALOG, values)}  # noqa: E731
-    assert "q12" not in ids({"q11": "nao"})
-    assert "q12" in ids({"q11": "sim"})
-    assert "q18" not in ids({"q17": "nao"})
-    assert "q18" in ids({"q17": "sim"})
-    assert "q18" in ids({"q17": "as_vezes"})
-    assert "q19_other" not in ids({"q19": ["aterro"]})
-    assert "q19_other" in ids({"q19": ["aterro", "outro"]})
+    ids = lambda values: {q.id for q in visible_questions(CATALOG, values, ITEMS)}  # noqa: E731
+    p = lambda qid: response_key(qid, PRODUCT.id)  # noqa: E731
+    w = lambda qid: response_key(qid, WASTE.id)  # noqa: E731
+    assert "q12" not in ids({p("q11"): "nao"})
+    assert "q12" in ids({p("q11"): "sim"})
+    assert "q18" not in ids({w("q17"): "nao"})
+    assert "q18" in ids({w("q17"): "sim"})
+    assert "q18" in ids({w("q17"): "as_vezes"})
+    assert "q19_other" not in ids({w("q19"): ["aterro"]})
+    assert "q19_other" in ids({w("q19"): ["aterro", "outro"]})
 
 
 def test_hidden_answers_do_not_count_or_block_completion() -> None:
-    values = {**ALL_ANSWERS, "q12": "resposta antiga"}
-    evaluation = evaluate(CATALOG, values)
+    values = {**ALL_ANSWERS, response_key("q12", PRODUCT.id): "resposta antiga"}
+    evaluation = evaluate(CATALOG, values, items=ITEMS)
     assert evaluation.complete is True
     assert evaluation.progress == 100
     axis1 = next(s for s in evaluation.steps if s.step_id == STEP_MATERIAL_FLOWS)
     assert axis1.not_applicable == 3  # q12, q18, q19_other
-    assert "q12" not in evaluation.visible_question_ids
+    assert response_key("q12", PRODUCT.id) not in evaluation.visible_question_ids
 
 
 def test_showing_conditional_question_makes_it_required() -> None:
-    values = {**ALL_ANSWERS, "q17": "sim"}
-    evaluation = evaluate(CATALOG, values)
+    values = {**ALL_ANSWERS, response_key("q17", WASTE.id): "sim"}
+    evaluation = evaluate(CATALOG, values, items=ITEMS)
     axis1 = next(s for s in evaluation.steps if s.step_id == STEP_MATERIAL_FLOWS)
-    assert axis1.missing_required == ["q18"]
+    assert axis1.missing_required == [response_key("q18", WASTE.id)]
     assert axis1.status is StepStatus.IN_PROGRESS
     assert evaluation.complete is False
 
 
 # ------------------------------------------------------------------ pontuação
 def test_scoring_by_pillar_and_ems() -> None:
-    evaluation = evaluate(CATALOG, ALL_ANSWERS)
+    evaluation = evaluate(CATALOG, ALL_ANSWERS, items=ITEMS)
     pillars = {p.pillar_id: p for p in evaluation.pillars}
     # FM: 40 (excelente) + 25 (IIA) + 5 (2–5%) + 5 (planilhas)
     assert (pillars[PILLAR_FM].points, pillars[PILLAR_FM].max_points) == (75, 100)
@@ -347,10 +384,14 @@ def test_progress_counts_required_questions_of_all_axes() -> None:
     assert statuses["axis_2_symbiosis"] is StepStatus.NOT_STARTED
     assert statuses["axis_3_esg"] is StepStatus.NOT_STARTED
     assert statuses["axis_4_economic"] is StepStatus.NOT_STARTED
-    # Eixo 2: 7 obrigatórias visíveis (2.3 e 2.6 condicionais, 2.10 opcional)
-    # Eixo 3: 6 obrigatórias (detalhamentos 3.4, 3.6 e 3.8 são opcionais)
-    # Eixo 4: 3 obrigatórias (detalhamentos 4.3 e 4.5 são opcionais)
-    assert evaluation.required_total == 8 + 14 + 7 + 6 + 3
+    # Sem itens cadastrados: Eixo 1 = cadastros 1.1 e 1.7 + 1.16; Eixo 2 = 4 gerais
+    # (2.6 condicional, 2.10 opcional); Eixo 3 = 6; Eixo 4 = 4.4.
+    assert evaluation.required_total == 8 + 3 + 4 + 6 + 1
+    axis1 = next(s for s in evaluation.steps if s.step_id == STEP_MATERIAL_FLOWS)
+    assert axis1.missing_required == ["q09", "q14", "q43"]
+    # Com 1 produto e 1 resíduo: mesmas 38 obrigatórias do formulário anterior.
+    with_items = evaluate(CATALOG, {}, items=ITEMS)
+    assert with_items.required_total == 8 + 14 + 7 + 6 + 3
 
 
 # ------------------------------------------------------------------- validação
@@ -410,6 +451,14 @@ def _service(company: CompanyDocument, *, agent: UserDocument | None = None):
         )
     )
     repo = AsyncMock()
+
+    async def _migrate(diagnostic_id, items, responses):
+        current = await repo.get(diagnostic_id)
+        current.items = items
+        current.responses = responses
+        return current
+
+    repo.replace_items_and_responses = AsyncMock(side_effect=_migrate)
     repo.get_open_for_company = AsyncMock(return_value=None)
     repo.create = AsyncMock(side_effect=lambda doc: doc)
     audit = AsyncMock()
@@ -467,12 +516,19 @@ async def test_create_resumes_open_diagnostic_of_same_agent() -> None:
     assert exc.value.code == "diagnostic_open_by_other_agent"
 
 
-def _open_diagnostic(company: CompanyDocument, agent: UserDocument, **values: object):
+def _open_diagnostic(
+    company: CompanyDocument,
+    agent: UserDocument,
+    *,
+    items: list[DiagnosticItem] | None = None,
+    **values: object,
+):
     return MaturityDiagnosticDocument(
         company_id=company.id,
         agent_user_id=agent.id,
         catalog_version=CATALOG.version,
         company_snapshot={"legal_name": company.legal_name, "tax_id": company.tax_id},
+        items=[item.model_copy() for item in (items or [])],
         responses={
             qid: DiagnosticResponse(value=value)  # type: ignore[arg-type]
             for qid, value in values.items()
@@ -483,7 +539,7 @@ def _open_diagnostic(company: CompanyDocument, agent: UserDocument, **values: ob
 async def test_save_responses_validates_and_scores() -> None:
     company = _company()
     service, repo, agent = _service(company)
-    diagnostic = _open_diagnostic(company, agent)
+    diagnostic = _open_diagnostic(company, agent, items=ITEMS)
     repo.get = AsyncMock(return_value=diagnostic)
 
     async def _save(diagnostic_id, responses, *, current_step=None):
@@ -498,15 +554,17 @@ async def test_save_responses_validates_and_scores() -> None:
         diagnostic.id,
         SaveResponsesRequest(
             answers=[
-                AnswerInput(question_id="q28", value="parcial"),
-                AnswerInput(question_id="q19", value=["outro"]),
+                AnswerInput(question_id=f"q28@{WASTE.id}", value="parcial"),
+                AnswerInput(question_id=f"q19@{WASTE.id}", value=["outro"]),
+                AnswerInput(question_id="q43", value="erp"),
             ],
             current_step=STEP_MATERIAL_FLOWS,
         ),
     )
     saved = repo.save_responses.await_args.args[1]
-    assert saved["q28"].score == 15
-    assert saved["q19"].value == ["outro"]
+    assert saved[f"q28@{WASTE.id}"].score == 15
+    assert saved[f"q19@{WASTE.id}"].value == ["outro"]
+    assert saved["q43"].score == 10
     patch = repo.update.await_args.args[1]
     assert patch["status"] == DiagnosticStatus.IN_PROGRESS.value
 
@@ -516,13 +574,23 @@ async def test_save_responses_validates_and_scores() -> None:
             diagnostic.id,
             SaveResponsesRequest(
                 answers=[
-                    AnswerInput(question_id="q28", value="otimo"),
+                    AnswerInput(question_id=f"q28@{WASTE.id}", value="otimo"),
                     AnswerInput(question_id="q01", value="Outro nome"),
                     AnswerInput(question_id="q99", value="x"),
+                    # pergunta por resíduo sem item / com item de outro tipo / item inexistente
+                    AnswerInput(question_id="q29", value="classe_i"),
+                    AnswerInput(question_id=f"q29@{PRODUCT.id}", value="classe_i"),
+                    AnswerInput(question_id="q29@naoexiste", value="classe_i"),
+                    # pergunta geral com item / cadastro não é resposta
+                    AnswerInput(question_id=f"q43@{WASTE.id}", value="erp"),
+                    AnswerInput(question_id="q09", value="Produto X"),
                 ]
             ),
         )
-    assert set(exc.value.details["errors"]) == {"q28", "q01", "q99"}
+    assert set(exc.value.details["errors"]) == {
+        f"q28@{WASTE.id}", "q01", "q99", "q29", f"q29@{PRODUCT.id}", "q29@naoexiste",
+        f"q43@{WASTE.id}", "q09",
+    }
 
 
 async def test_other_agent_cannot_access_diagnostic() -> None:
@@ -543,7 +611,7 @@ async def test_complete_requires_all_available_steps() -> None:
         await service.complete("agent-uid", incomplete.id)
     assert exc.value.code == "diagnostic_incomplete"
 
-    complete = _open_diagnostic(company, agent, **ALL_ANSWERS)
+    complete = _open_diagnostic(company, agent, items=ITEMS, **ALL_ANSWERS)
     repo.get = AsyncMock(return_value=complete)
     repo.update = AsyncMock(
         side_effect=lambda _id, patch: complete.model_copy(
@@ -613,9 +681,11 @@ def _completed_before_axes_2_to_4(company, agent):
     old_result = evaluate(
         CATALOG,
         {**IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS},
+        items=ITEMS,
         available_step_ids={"identification", STEP_MATERIAL_FLOWS},
     ).model_dump(mode="python")
-    done = _open_diagnostic(company, agent, **IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS)
+    # Respostas no formato antigo (sem itens): convertidas em memória ao consultar.
+    done = _open_diagnostic(company, agent, **IDENTIFICATION_ANSWERS, **LEGACY_AXIS1_ANSWERS)
     return done.model_copy(
         update={
             "status": DiagnosticStatus.COMPLETED,
@@ -675,7 +745,9 @@ async def test_report_is_reused_and_requires_generation() -> None:
 async def test_report_requires_completed_diagnostic() -> None:
     company = _company()
     service, repo, agent = _service(company)
-    repo.get = AsyncMock(return_value=_open_diagnostic(company, agent, **ALL_ANSWERS))
+    repo.get = AsyncMock(
+        return_value=_open_diagnostic(company, agent, items=ITEMS, **ALL_ANSWERS)
+    )
     with pytest.raises(ConflictError) as exc:
         await service.generate_report("agent-uid", uuid4())
     assert exc.value.code == "diagnostic_not_completed"
@@ -693,7 +765,7 @@ def _full_report():
         value="Recicla Sul Ltda", source=ResponseSource.REGISTRY, registry_value="Recicla Sul Ltda"
     )
     responses["q05"] = DiagnosticResponse(value="Maria", registry_value="Maria S.")
-    result = evaluate(CATALOG, ALL_ANSWERS).model_dump(mode="python")
+    result = evaluate(CATALOG, ALL_ANSWERS, items=ITEMS).model_dump(mode="python")
     diagnostic = MaturityDiagnosticDocument(
         company_id=company.id,
         agent_user_id=agent.id,
@@ -701,6 +773,7 @@ def _full_report():
         status=DiagnosticStatus.COMPLETED,
         is_open=False,
         result=result,
+        items=ITEMS,
         responses=responses,
         completed_at=datetime(2026, 10, 3, 17, 30, tzinfo=UTC),
         company_snapshot={"legal_name": company.legal_name, "tax_id": company.tax_id},
@@ -709,7 +782,7 @@ def _full_report():
 
 
 def test_engine_reports_axis_and_pillar_contributions() -> None:
-    evaluation = evaluate(CATALOG, ALL_ANSWERS)
+    evaluation = evaluate(CATALOG, ALL_ANSWERS, items=ITEMS)
     axes = {a.step_id: a for a in evaluation.axes}
     assert [a.step_id for a in evaluation.axes] == [
         STEP_MATERIAL_FLOWS, STEP_SYMBIOSIS, STEP_ESG, STEP_ECONOMIC,
@@ -769,7 +842,8 @@ def test_report_flags_critical_license_alert() -> None:
         catalog_version=CATALOG.version,
         status=DiagnosticStatus.COMPLETED,
         is_open=False,
-        result=evaluate(CATALOG, values).model_dump(mode="python"),
+        result=evaluate(CATALOG, values, items=ITEMS).model_dump(mode="python"),
+        items=ITEMS,
         responses={k: DiagnosticResponse(value=v) for k, v in values.items()},  # type: ignore[arg-type]
         company_snapshot={"legal_name": company.legal_name, "tax_id": company.tax_id},
     )

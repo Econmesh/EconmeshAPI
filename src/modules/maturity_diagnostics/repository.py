@@ -10,6 +10,7 @@ from pymongo.errors import DuplicateKeyError
 
 from src.core.exceptions import ConflictError
 from src.modules.maturity_diagnostics.model import (
+    DiagnosticItem,
     DiagnosticResponse,
     DiagnosticStatus,
     MaturityDiagnosticDocument,
@@ -116,6 +117,77 @@ class MaturityDiagnosticsRepository:
         raw = await self._collection.find_one_and_update(
             {"_id": diagnostic_id, "is_open": True},
             {"$set": set_fields},
+            return_document=ReturnDocument.AFTER,
+        )
+        return MaturityDiagnosticDocument.model_validate(raw) if raw else None
+
+    # ------------------------------------------------------- itens dinâmicos
+    async def add_item(
+        self, diagnostic_id: UUID, item: DiagnosticItem
+    ) -> MaturityDiagnosticDocument | None:
+        raw = await self._collection.find_one_and_update(
+            {"_id": diagnostic_id, "is_open": True, "items.id": {"$ne": item.id}},
+            {
+                "$push": {"items": item.model_dump(mode="python")},
+                "$set": {"updated_at": utcnow()},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return MaturityDiagnosticDocument.model_validate(raw) if raw else None
+
+    async def update_item(
+        self, diagnostic_id: UUID, item: DiagnosticItem
+    ) -> MaturityDiagnosticDocument | None:
+        """Atualiza nome/descrição do item (as respostas são vinculadas pelo id)."""
+        raw = await self._collection.find_one_and_update(
+            {"_id": diagnostic_id, "is_open": True, "items.id": item.id},
+            {
+                "$set": {
+                    "items.$.name": item.name,
+                    "items.$.description": item.description,
+                    "items.$.updated_at": item.updated_at,
+                    "updated_at": utcnow(),
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return MaturityDiagnosticDocument.model_validate(raw) if raw else None
+
+    async def delete_item(
+        self, diagnostic_id: UUID, item_id: str, response_keys: list[str]
+    ) -> MaturityDiagnosticDocument | None:
+        """Remove o item e, na mesma operação, todas as respostas vinculadas a ele."""
+        update: dict[str, Any] = {
+            "$pull": {"items": {"id": item_id}},
+            "$set": {"updated_at": utcnow()},
+        }
+        if response_keys:
+            update["$unset"] = {f"responses.{key}": "" for key in response_keys}
+        raw = await self._collection.find_one_and_update(
+            {"_id": diagnostic_id, "is_open": True},
+            update,
+            return_document=ReturnDocument.AFTER,
+        )
+        return MaturityDiagnosticDocument.model_validate(raw) if raw else None
+
+    async def replace_items_and_responses(
+        self,
+        diagnostic_id: UUID,
+        items: list[DiagnosticItem],
+        responses: dict[str, DiagnosticResponse],
+    ) -> MaturityDiagnosticDocument | None:
+        """Migração de diagnósticos antigos (formato sem itens) — só se ainda sem itens."""
+        raw = await self._collection.find_one_and_update(
+            {"_id": diagnostic_id, "is_open": True, "items.0": {"$exists": False}},
+            {
+                "$set": {
+                    "items": [item.model_dump(mode="python") for item in items],
+                    "responses": {
+                        key: resp.model_dump(mode="python") for key, resp in responses.items()
+                    },
+                    "updated_at": utcnow(),
+                }
+            },
             return_document=ReturnDocument.AFTER,
         )
         return MaturityDiagnosticDocument.model_validate(raw) if raw else None

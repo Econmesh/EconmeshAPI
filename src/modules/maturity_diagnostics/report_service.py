@@ -9,13 +9,22 @@ from __future__ import annotations
 from typing import Any
 
 from src.modules.auth.model import UserDocument
-from src.modules.maturity_diagnostics.catalog import Catalog, StepKind
+from src.modules.maturity_diagnostics.catalog import (
+    Catalog,
+    ItemKind,
+    Question,
+    QuestionType,
+    Section,
+    StepKind,
+)
 from src.modules.maturity_diagnostics.engine import (
     AxisStatus,
     Evaluation,
     StepStatus,
     display_answer,
     evaluate,
+    items_of,
+    response_key,
     score_for,
 )
 from src.modules.maturity_diagnostics.interpretation import DiagnosticInterpretationService
@@ -30,6 +39,7 @@ from src.modules.maturity_diagnostics.methodology import (
     relative_reading,
 )
 from src.modules.maturity_diagnostics.model import (
+    DiagnosticItem,
     MaturityDiagnosticDocument,
     ResponseSource,
 )
@@ -42,6 +52,7 @@ from src.modules.maturity_diagnostics.report_schema import (
     ReportAxis,
     ReportDiagnosticInfo,
     ReportField,
+    ReportItem,
     ReportMethodology,
     ReportMethodologyItem,
     ReportPerson,
@@ -78,7 +89,12 @@ class DiagnosticReportService:
                 if step.get("status") != StepStatus.MAINTENANCE.value
                 and self._catalog.step(step["step_id"]) is not None
             }
-        return evaluate(self._catalog, diagnostic.answer_values(), available_step_ids=available)
+        return evaluate(
+            self._catalog,
+            diagnostic.answer_values(),
+            items=diagnostic.items,
+            available_step_ids=available,
+        )
 
     def build(
         self, diagnostic: MaturityDiagnosticDocument, agent: UserDocument | None
@@ -87,7 +103,7 @@ class DiagnosticReportService:
         evaluation = self.evaluation_for(diagnostic)
         company = diagnostic.company_snapshot
         interpretation = self._interpreter.interpret(
-            values, evaluation, company_name=company.legal_name
+            values, evaluation, company_name=company.legal_name, items=diagnostic.items
         )
         visible = set(evaluation.visible_question_ids)
 
@@ -143,6 +159,8 @@ class DiagnosticReportService:
                 )
             )
         pillar_meta = {p.id: p for p in self._catalog.pillars}
+        worst = evaluation.worst_case
+        worst_pillars = {p.pillar_id: p for p in worst.pillars} if worst else {}
         pillars = [
             ReportPillar(
                 pillar_id=score.pillar_id,
@@ -157,6 +175,12 @@ class DiagnosticReportService:
                 answered=score.answered,
                 total=score.total,
                 reading=relative_reading(score.percent),
+                worst_points=worst_pillars[score.pillar_id].points
+                if score.pillar_id in worst_pillars
+                else None,
+                worst_ems_points=worst_pillars[score.pillar_id].ems_points
+                if score.pillar_id in worst_pillars
+                else None,
             )
             for score in evaluation.pillars
             if score.total > 0
@@ -187,6 +211,10 @@ class DiagnosticReportService:
             else None,
             maturity_scale_defined=self._scale.official and bool(self._scale.levels),
             headline=headline,
+            worst_case_score=worst.ems.points if worst else None,
+            worst_case_percent=round(worst.ems.points * 100 / worst.ems.max_available, 1)
+            if worst and worst.ems.max_available
+            else None,
         )
 
         evaluated = [a.title for a in axes if a.status == AxisStatus.EVALUATED.value]
@@ -204,6 +232,7 @@ class DiagnosticReportService:
             ),
         )
 
+        answers, item_sections = self._answers(diagnostic, evaluation, visible)
         return MaturityReport(
             diagnostic_id=diagnostic.id,
             versions=ReportVersions(
@@ -241,7 +270,9 @@ class DiagnosticReportService:
             conclusions=interpretation.conclusions,
             scope=scope,
             methodology=self._methodology(),
-            answers=self._answers(diagnostic, evaluation, visible),
+            answers=answers,
+            products=self._report_items(diagnostic, ItemKind.PRODUCT, item_sections),
+            wastes=self._report_items(diagnostic, ItemKind.WASTE, item_sections),
         )
 
     # ------------------------------------------------------------------
@@ -284,15 +315,88 @@ class DiagnosticReportService:
             maturity_scale_note=note,
         )
 
+    def _answer_item(
+        self,
+        question: Question,
+        key: str,
+        diagnostic: MaturityDiagnosticDocument,
+        pillar_codes: dict[str, str],
+    ) -> ReportAnswerItem:
+        response = diagnostic.responses.get(key)
+        value = response.value if response else None
+        points = score_for(question, value)
+        return ReportAnswerItem(
+            question_id=key,
+            code=question.code,
+            label=question.label,
+            answer=display_answer(question, value),
+            source=response.source if response else None,
+            scored=question.scored,
+            points=points,
+            max_points=question.max_points if question.scored else None,
+            pillar_code=pillar_codes.get(question.pillar_id or ""),
+        )
+
+    def _section_answers(
+        self,
+        section: Section,
+        diagnostic: MaturityDiagnosticDocument,
+        visible: set[str],
+        pillar_codes: dict[str, str],
+    ) -> tuple[list[ReportAnswerItem], dict[str, list[ReportAnswerItem]]]:
+        """Respostas gerais da seção e respostas por item (``item_id → respostas``)."""
+        general: list[ReportAnswerItem] = []
+        by_item: dict[str, list[ReportAnswerItem]] = {}
+        for question in self._catalog.questions:
+            if question.section_id != section.id:
+                continue
+            if question.type is QuestionType.ITEM_LIST:
+                names = [item.name for item in items_of(diagnostic.items, question.item_kind)]
+                general.append(
+                    ReportAnswerItem(
+                        question_id=question.id,
+                        code=question.code,
+                        label=question.label,
+                        answer="; ".join(names) or None,
+                    )
+                )
+                continue
+            if question.per_item is None:
+                if question.id in visible:
+                    general.append(
+                        self._answer_item(question, question.id, diagnostic, pillar_codes)
+                    )
+                continue
+            for item in items_of(diagnostic.items, question.per_item):
+                key = response_key(question.id, item.id)
+                if key in visible:
+                    by_item.setdefault(item.id, []).append(
+                        self._answer_item(question, key, diagnostic, pillar_codes)
+                    )
+        # Reflexo por item (ex.: 1.8 de cada resíduo em Licenciamento e rastreabilidade).
+        reference = section.item_reference
+        if reference is not None:
+            for item in items_of(diagnostic.items, reference.kind):
+                for question_id in reference.question_ids:
+                    question = self._catalog.question(question_id)
+                    key = response_key(question_id, item.id)
+                    if question is not None and key in visible:
+                        by_item.setdefault(item.id, []).append(
+                            self._answer_item(question, key, diagnostic, pillar_codes)
+                        )
+        return general, by_item
+
     def _answers(
         self,
         diagnostic: MaturityDiagnosticDocument,
         evaluation: Evaluation,
         visible: set[str],
-    ) -> list[ReportAnswerStep]:
+    ) -> tuple[list[ReportAnswerStep], dict[str, list[ReportAnswerSection]]]:
+        """Respostas por etapa (gerais + uma seção por item) e o índice por item."""
         axis_status = {a.step_id: a.status.value for a in evaluation.axes}
         pillar_codes = {p.id: p.code for p in self._catalog.pillars}
         steps: list[ReportAnswerStep] = []
+        item_sections: dict[str, list[ReportAnswerSection]] = {}
         for step in sorted(self._catalog.steps, key=lambda s: s.order):
             status = (
                 "identification"
@@ -301,34 +405,71 @@ class DiagnosticReportService:
             )
             sections: list[ReportAnswerSection] = []
             if status != AxisStatus.MAINTENANCE.value:
+                axis_label = (
+                    f"Eixo {step.order - 1}" if step.kind is StepKind.AXIS else step.short_title
+                )
                 for section in (s for s in self._catalog.sections if s.step_id == step.id):
-                    items: list[ReportAnswerItem] = []
-                    for question in self._catalog.questions:
-                        if question.section_id != section.id or question.id not in visible:
+                    general, by_item = self._section_answers(
+                        section, diagnostic, visible, pillar_codes
+                    )
+                    if general:
+                        sections.append(ReportAnswerSection(title=section.title, answers=general))
+                    for item in diagnostic.items:
+                        answers = by_item.get(item.id)
+                        if not answers:
                             continue
-                        response = diagnostic.responses.get(question.id)
-                        value = response.value if response else None
-                        items.append(
-                            ReportAnswerItem(
-                                question_id=question.id,
-                                code=question.code,
-                                label=question.label,
-                                answer=display_answer(question, value),
-                                source=response.source if response else None,
-                                scored=question.scored,
-                                points=score_for(question, value),
-                                max_points=question.max_points if question.scored else None,
-                                pillar_code=pillar_codes.get(question.pillar_id or ""),
+                        sections.append(
+                            ReportAnswerSection(
+                                title=f"{section.title} — {item.name}",
+                                answers=answers,
+                                item_id=item.id,
+                                item_name=item.name,
+                                item_kind=item.kind.value,
                             )
                         )
-                    if items:
-                        sections.append(ReportAnswerSection(title=section.title, answers=items))
+                        item_sections.setdefault(item.id, []).append(
+                            ReportAnswerSection(
+                                title=f"{axis_label} · {section.title}",
+                                answers=answers,
+                                item_id=item.id,
+                                item_name=item.name,
+                                item_kind=item.kind.value,
+                            )
+                        )
             steps.append(
                 ReportAnswerStep(
                     step_id=step.id, title=step.title, status=status, sections=sections
                 )
             )
-        return steps
+        return steps, item_sections
+
+    def _report_items(
+        self,
+        diagnostic: MaturityDiagnosticDocument,
+        kind: ItemKind,
+        item_sections: dict[str, list[ReportAnswerSection]],
+    ) -> list[ReportItem]:
+        meta = self._catalog.item_kind(kind)
+        result: list[ReportItem] = []
+        item: DiagnosticItem
+        for item in items_of(diagnostic.items, kind):  # type: ignore[assignment]
+            sections = item_sections.get(item.id, [])
+            scored = [a for section in sections for a in section.answers if a.scored]
+            # O reflexo (ex.: 1.8 no Eixo 3) repete uma resposta: conta uma única vez.
+            unique = {a.question_id: a for a in scored}.values()
+            result.append(
+                ReportItem(
+                    id=item.id,
+                    kind=kind.value,
+                    kind_label=meta.label if meta else kind.value,
+                    name=item.name,
+                    description=item.description,
+                    sections=sections,
+                    points=int(sum(a.points or 0 for a in unique)),
+                    max_points=sum(a.max_points or 0 for a in unique),
+                )
+            )
+        return result
 
 
 __all__ = ["DiagnosticReportService"]

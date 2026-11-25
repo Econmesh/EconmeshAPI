@@ -402,6 +402,40 @@ def build_report_blocks(  # noqa: PLR0915
         f"<b>{_date(report.diagnostic.completed_at)}</b></p>"
     )
 
+    # Produtos e resíduos -------------------------------------------------
+    if report.products or report.wastes:
+        section("Produtos e Resíduos", new_page=True)
+        for group_title, entries in (("Produtos", report.products), ("Resíduos", report.wastes)):
+            if not entries:
+                continue
+            head(f"<h3>{group_title} cadastrados ({len(entries)})</h3>")
+            for entry in entries:
+                score = (
+                    f" &nbsp;<span class='tag ok'>{entry.points}/{entry.max_points} pts</span>"
+                    if entry.max_points
+                    else ""
+                )
+                inner = (
+                    f"<p style='margin:0'><span class='muted small'>{_e(entry.kind_label)}</span> "
+                    f"<b>{_e(entry.name)}</b>{score}</p>"
+                )
+                if entry.description:
+                    inner += f"<p class='small muted' style='margin:0'>{_e(entry.description)}</p>"
+                for sec in entry.sections:
+                    inner += f"<p class='subhead'>{_e(sec.title)}</p>"
+                    for ans in sec.answers:
+                        pts = ""
+                        if ans.scored:
+                            pts = (
+                                f" <span class='tag ok'>{_num(ans.points, 2)}/{ans.max_points}"
+                                f"{' · ' + _e(ans.pillar_code) if ans.pillar_code else ''}</span>"
+                            )
+                        inner += (
+                            f"<p class='qa'><span class='muted small'>{_e(ans.code or '')}</span> "
+                            f"{_e(ans.label)}<br/><b>{_e(ans.answer or '—')}</b>{pts}</p>"
+                        )
+                card(inner)
+
     # 2. Resumo executivo ---------------------------------------------------
     section("Resumo Executivo", new_page=True)
     level = summary.maturity_level
@@ -426,6 +460,13 @@ def build_report_blocks(  # noqa: PLR0915
         + (
             "<p class='small warn'>Score parcial: nem todos os eixos foram avaliados.</p>"
             if summary.partial
+            else ""
+        )
+        + (
+            f"<p class='small muted'>Pior caso entre produtos/resíduos: "
+            f"{_num(summary.worst_case_score, 2)} de {_num(summary.overall_max, 2)} pontos.</p>"
+            if summary.worst_case_score is not None
+            and round(summary.worst_case_score, 2) != round(summary.overall_score, 2)
             else ""
         )
         + "</td></tr></table>"
@@ -499,7 +540,7 @@ def build_report_blocks(  # noqa: PLR0915
         )
         card(
             f"<p style='margin:0'><b>{_e(pillar.name)}</b> &nbsp;"
-            f"<span class='score'>{pillar.points}</span>"
+            f"<span class='score'>{_num(pillar.points, 2)}</span>"
             f"<span class='muted'> / {pillar.max_points}</span></p>"
             f"<p class='small muted' style='margin:0'>{_e(weight)} · {pillar.answered} de "
             f"{pillar.total} indicadores respondidos</p>"
@@ -507,6 +548,14 @@ def build_report_blocks(  # noqa: PLR0915
             f"<p class='small muted' style='margin:0'>{_num(pillar.percent)}% do máximo do pilar · "
             f"contribuição de {_num(pillar.ems_points, 2)} de {_num(pillar.ems_max, 2)} pontos no "
             f"EMS · {_e(pillar.reading or '')}</p>"
+            + (
+                f"<p class='small muted' style='margin:0'>Pior caso entre itens: "
+                f"{_num(pillar.worst_points, 2)} pontos · {_num(pillar.worst_ems_points, 2)} no "
+                "EMS</p>"
+                if pillar.worst_points is not None
+                and round(pillar.worst_points, 2) != round(pillar.points, 2)
+                else ""
+            )
         )
 
     # 6. Indicadores --------------------------------------------------------
@@ -521,16 +570,35 @@ def build_report_blocks(  # noqa: PLR0915
         head(f"<h3>{_e(pillar.name)}</h3>")
         for ind in items:
             tone = _TIER_TONE.get(ind.tier, "muted")
-            points = "—" if ind.points is None else str(ind.points)
+            points = _num(ind.points, 2)
+            per_item = ""
+            if ind.per_item and ind.items:
+                rows = "".join(
+                    f"<li>{_e(row.item_name)}: <b>{_e(row.answer or 'Não respondida')}</b> "
+                    f"({'—' if row.points is None else row.points}/{ind.max_points})</li>"
+                    for row in ind.items
+                )
+                worst = (
+                    f"<p class='small muted' style='margin:0'>Média dos itens: {points} · pior "
+                    f"caso: {_num(ind.worst_points, 2)}</p>"
+                    if len(ind.items) > 1
+                    else ""
+                )
+                per_item = f"<ul class='small' style='margin:2pt 0'>{rows}</ul>{worst}"
             card(
                 f"<p style='margin:0'><span class='muted small'>{_e(ind.code or '')}</span> "
                 f"<b>{_e(ind.title)}</b> &nbsp;<span class='tag {tone}' style='font-size:10pt'>"
                 f"{points}/{ind.max_points} pontos</span></p>"
                 f"<p class='small muted' style='margin:0'>{_e(ind.label)}</p>"
                 f"{_bar(ind.percent, used)}"
-                f"<p style='margin:0'><b>Resposta:</b> {_e(ind.answer or 'Não respondida')}</p>"
-                f"<p class='small' style='margin:2pt 0 0 0'>{_e(ind.interpretation or '')}</p>"
-                f"<p class='small muted' style='margin:2pt 0 0 0'>Peso no pilar: "
+                + (
+                    per_item
+                    if per_item
+                    else f"<p style='margin:0'><b>Resposta:</b> "
+                    f"{_e(ind.answer or 'Não respondida')}</p>"
+                )
+                + f"<p class='small' style='margin:2pt 0 0 0'>{_e(ind.interpretation or '')}</p>"
+                + f"<p class='small muted' style='margin:2pt 0 0 0'>Peso no pilar: "
                 f"{_num(ind.pillar_weight)}% · Peso no EMS: {_num(ind.ems_weight, 2)}%</p>"
             )
 
@@ -648,7 +716,7 @@ def build_report_blocks(  # noqa: PLR0915
             for ans in sec.answers:
                 score = ""
                 if ans.scored:
-                    points = "—" if ans.points is None else str(ans.points)
+                    points = _num(ans.points, 2)
                     score = (
                         f" &nbsp;<span class='tag ok'>{points}/{ans.max_points} pts"
                         f"{' · ' + _e(ans.pillar_code) if ans.pillar_code else ''}</span>"

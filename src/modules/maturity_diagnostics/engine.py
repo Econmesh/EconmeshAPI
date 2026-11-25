@@ -1,21 +1,33 @@
 """Motor de regras do DMC: visibilidade condicional, validação, progresso e pontuação.
 
-Funções puras sobre o catálogo + respostas — sem I/O — para serem
+Funções puras sobre o catálogo + respostas + itens — sem I/O — para serem
 reutilizadas pelo serviço, pelo relatório e pelos testes.
+
+**Instâncias.** Perguntas com ``per_item`` geram uma *instância* por item
+cadastrado do mesmo tipo (produto/resíduo); a resposta de cada instância fica
+na chave ``"<pergunta>@<item>"`` (``response_key``). Perguntas gerais têm uma
+única instância, com a chave igual ao id da pergunta.
+
+**Consolidação da pontuação.** Uma pergunta pontuada respondida por vários
+itens entra no pilar/EMS pela **média** dos pontos dos itens (score oficial).
+O **pior caso** (menor pontuação entre os itens) é calculado em paralelo
+(``Evaluation.worst_case``) como leitura conservadora.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 
 from src.modules.maturity_diagnostics.catalog import (
     Catalog,
     ConditionOperator,
+    ItemKind,
     Question,
     QuestionType,
     StepKind,
@@ -23,7 +35,20 @@ from src.modules.maturity_diagnostics.catalog import (
 
 AnswerValue = str | list[str] | None
 
+#: Separador entre pergunta e item na chave da resposta (``q10@a1b2c3``).
+ITEM_KEY_SEPARATOR = "@"
+
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class ItemRef(Protocol):
+    """Qualquer objeto com ``id`` e ``kind`` (ex.: ``DiagnosticItem``)."""
+
+    @property
+    def id(self) -> str: ...
+
+    @property
+    def kind(self) -> ItemKind | str: ...
 
 
 class InvalidAnswerError(ValueError):
@@ -40,6 +65,13 @@ class StepStatus(StrEnum):
     MAINTENANCE = "maintenance"
 
 
+class ScoreAggregation(StrEnum):
+    #: Média dos itens — score oficial.
+    AVERAGE = "average"
+    #: Menor pontuação entre os itens — leitura conservadora.
+    WORST = "worst"
+
+
 class StepProgress(BaseModel):
     step_id: str
     status: StepStatus
@@ -49,12 +81,13 @@ class StepProgress(BaseModel):
     optional_answered: int = 0
     not_applicable: int = 0
     percent: int = 0
+    #: Chaves das respostas obrigatórias pendentes (``q10@<item>`` para perguntas por item).
     missing_required: list[str] = []
 
 
 class PillarScore(BaseModel):
     pillar_id: str
-    points: int
+    points: float
     max_points: int
     percent: float | None
     answered: int
@@ -74,7 +107,7 @@ class AxisScore(BaseModel):
 
     step_id: str
     status: AxisStatus
-    points: int = 0
+    points: float = 0
     max_points: int = 0
     ems_points: float = 0.0
     ems_max: float = 0.0
@@ -90,10 +123,42 @@ class EmsScore(BaseModel):
     max_available: float
 
 
+class ItemScore(BaseModel):
+    item_id: str
+    points: int | None = None
+
+
+class QuestionScore(BaseModel):
+    """Pontuação consolidada de uma pergunta pontuada (geral ou por item)."""
+
+    question_id: str
+    step_id: str
+    pillar_id: str | None = None
+    #: Média dos itens (perguntas gerais: a própria pontuação).
+    points: float | None = None
+    #: Menor pontuação entre os itens respondidos.
+    worst_points: int | None = None
+    max_points: int = 0
+    ems_weight: float = 0.0
+    per_item: bool = False
+    answered_items: int = 0
+    total_items: int = 0
+    items: list[ItemScore] = []
+
+
+class ScoreSet(BaseModel):
+    aggregation: ScoreAggregation
+    pillars: list[PillarScore]
+    axes: list[AxisScore]
+    ems: EmsScore
+
+
 class Alert(BaseModel):
     question_id: str
     level: str
     message: str
+    #: Item (produto/resíduo) da resposta que disparou o alerta, quando houver.
+    item_id: str | None = None
 
 
 class Evaluation(BaseModel):
@@ -104,16 +169,79 @@ class Evaluation(BaseModel):
     pillars: list[PillarScore]
     ems: EmsScore
     complete: bool
+    #: Chaves das instâncias visíveis (``q09``, ``q10@<item>``…).
     visible_question_ids: list[str]
     #: Alertas disparados pelas respostas (ex.: LO vencida = risco crítico).
     alerts: list[Alert] = []
     axes: list[AxisScore] = []
+    #: Detalhe por pergunta pontuada, inclusive a pontuação de cada item.
+    question_scores: list[QuestionScore] = []
+    #: Mesmo cálculo considerando o pior item de cada pergunta.
+    worst_case: ScoreSet | None = None
+
+
+# ------------------------------------------------------------------- chaves
+def response_key(question_id: str, item_id: str | None = None) -> str:
+    return f"{question_id}{ITEM_KEY_SEPARATOR}{item_id}" if item_id else question_id
+
+
+def split_key(key: str) -> tuple[str, str | None]:
+    """``"q10@abc"`` → ``("q10", "abc")``; ``"q10"`` → ``("q10", None)``."""
+    question_id, separator, item_id = key.partition(ITEM_KEY_SEPARATOR)
+    if not separator:
+        return key, None
+    return question_id, item_id or None
+
+
+@dataclass(frozen=True)
+class QuestionInstance:
+    question: Question
+    item_id: str | None = None
+
+    @property
+    def key(self) -> str:
+        return response_key(self.question.id, self.item_id)
+
+
+def items_of(items: Sequence[ItemRef], kind: ItemKind | str | None) -> list[ItemRef]:
+    return [item for item in items if item.kind == kind]
+
+
+def question_instances(
+    catalog: Catalog, items: Sequence[ItemRef] = ()
+) -> list[QuestionInstance]:
+    """Instâncias na ordem do catálogo (dependências antes dos dependentes)."""
+    result: list[QuestionInstance] = []
+    for question in catalog.questions:
+        if question.per_item is None:
+            result.append(QuestionInstance(question))
+        else:
+            result.extend(
+                QuestionInstance(question, item.id) for item in items_of(items, question.per_item)
+            )
+    return result
 
 
 # --------------------------------------------------------------- visibilidade
-def is_visible(question: Question, values: Mapping[str, AnswerValue]) -> bool:
+def _condition_key(
+    catalog: Catalog | None, condition_question_id: str, item_id: str | None
+) -> str:
+    if item_id is None:
+        return condition_question_id
+    source = catalog.question(condition_question_id) if catalog is not None else None
+    if source is not None and source.per_item is None:
+        return condition_question_id
+    return response_key(condition_question_id, item_id)
+
+
+def is_visible(
+    question: Question,
+    values: Mapping[str, AnswerValue],
+    item_id: str | None = None,
+    catalog: Catalog | None = None,
+) -> bool:
     for condition in question.show_if:
-        current = values.get(condition.question_id)
+        current = values.get(_condition_key(catalog, condition.question_id, item_id))
         if condition.operator is ConditionOperator.IN:
             if not isinstance(current, str) or current not in condition.values:
                 return False
@@ -124,18 +252,33 @@ def is_visible(question: Question, values: Mapping[str, AnswerValue]) -> bool:
     return True
 
 
-def visible_questions(catalog: Catalog, values: Mapping[str, AnswerValue]) -> list[Question]:
-    """Perguntas visíveis, resolvendo dependências encadeadas.
+def visible_instances(
+    catalog: Catalog, values: Mapping[str, AnswerValue], items: Sequence[ItemRef] = ()
+) -> list[QuestionInstance]:
+    """Instâncias visíveis, resolvendo dependências encadeadas.
 
-    Uma pergunta só aparece se a pergunta da qual depende também estiver
-    visível (respostas ocultas não disparam outras condições).
+    Uma instância só aparece se a instância da qual depende (do mesmo item,
+    quando a condição é por item) também estiver visível.
     """
     effective: dict[str, AnswerValue] = {}
+    result: list[QuestionInstance] = []
+    for instance in question_instances(catalog, items):
+        if is_visible(instance.question, effective, instance.item_id, catalog):
+            result.append(instance)
+            effective[instance.key] = values.get(instance.key)
+    return result
+
+
+def visible_questions(
+    catalog: Catalog, values: Mapping[str, AnswerValue], items: Sequence[ItemRef] = ()
+) -> list[Question]:
+    """Perguntas com ao menos uma instância visível (perguntas gerais incluídas)."""
+    seen: set[str] = set()
     result: list[Question] = []
-    for question in catalog.questions:  # catálogo em ordem de dependência
-        if is_visible(question, effective):
-            result.append(question)
-            effective[question.id] = values.get(question.id)
+    for instance in visible_instances(catalog, values, items):
+        if instance.question.id not in seen:
+            seen.add(instance.question.id)
+            result.append(instance.question)
     return result
 
 
@@ -147,9 +290,22 @@ def is_answered(value: AnswerValue) -> bool:
     return bool(value.strip())
 
 
+def instance_answered(
+    instance: QuestionInstance, values: Mapping[str, AnswerValue], items: Sequence[ItemRef]
+) -> bool:
+    question = instance.question
+    if question.type is QuestionType.ITEM_LIST:
+        return bool(items_of(items, question.item_kind))
+    return is_answered(values.get(instance.key))
+
+
 # ------------------------------------------------------------------ validação
 def normalize_answer(question: Question, raw: Any) -> AnswerValue:
     """Valida e normaliza um valor bruto vindo do cliente. ``None`` limpa."""
+    if question.type is QuestionType.ITEM_LIST:
+        raise InvalidAnswerError(
+            question.id, "Use o cadastro de itens para adicionar, editar ou excluir."
+        )
     if raw is None:
         return None
     if question.type is QuestionType.MULTI_CHOICE:
@@ -220,32 +376,144 @@ def _percent(done: int, total: int) -> int:
     return round(done * 100 / total)
 
 
+def points_contribution(question: Question, points: float | None) -> float | None:
+    """Pontos de EMS: pontos / máximo × peso no EMS."""
+    if points is None or not question.max_points:
+        return None
+    return points / question.max_points * (question.ems_weight or 0.0)
+
+
 def ems_contribution(question: Question, value: AnswerValue) -> float | None:
     """Pontos de EMS de uma resposta: pontos / máximo × peso no EMS."""
-    score = score_for(question, value)
-    if score is None or not question.max_points:
-        return None
-    return score / question.max_points * (question.ems_weight or 0.0)
+    return points_contribution(question, score_for(question, value))
+
+
+def _question_scores(
+    catalog: Catalog,
+    visible: Sequence[QuestionInstance],
+    values: Mapping[str, AnswerValue],
+    available: Collection[str],
+) -> list[QuestionScore]:
+    grouped: dict[str, list[QuestionInstance]] = {}
+    for instance in visible:
+        question = instance.question
+        if question.scored and question.step_id in available:
+            grouped.setdefault(question.id, []).append(instance)
+    result: list[QuestionScore] = []
+    for question in catalog.questions:
+        instances = grouped.get(question.id)
+        if not instances:
+            continue
+        item_scores = [
+            ItemScore(item_id=inst.item_id or "", points=score_for(question, values.get(inst.key)))
+            for inst in instances
+        ]
+        answered = [s.points for s in item_scores if s.points is not None]
+        result.append(
+            QuestionScore(
+                question_id=question.id,
+                step_id=question.step_id,
+                pillar_id=question.pillar_id,
+                points=round(sum(answered) / len(answered), 2) if answered else None,
+                worst_points=min(answered) if answered else None,
+                max_points=question.max_points,
+                ems_weight=question.ems_weight or 0.0,
+                per_item=question.per_item is not None,
+                answered_items=len(answered),
+                total_items=len(instances),
+                items=item_scores if question.per_item is not None else [],
+            )
+        )
+    return result
+
+
+def _score_set(
+    catalog: Catalog,
+    scores: Sequence[QuestionScore],
+    available: Collection[str],
+    aggregation: ScoreAggregation,
+) -> ScoreSet:
+    def pts(score: QuestionScore) -> float | None:
+        if aggregation is ScoreAggregation.WORST:
+            return float(score.worst_points) if score.worst_points is not None else None
+        return score.points
+
+    def contribution(score: QuestionScore) -> float:
+        value = pts(score)
+        if value is None or not score.max_points:
+            return 0.0
+        return value / score.max_points * score.ems_weight
+
+    pillars: list[PillarScore] = []
+    for pillar in catalog.pillars:
+        scored = [s for s in scores if s.pillar_id == pillar.id]
+        answered = [s for s in scored if pts(s) is not None]
+        points = round(sum(pts(s) or 0.0 for s in answered), 2)
+        max_points = sum(s.max_points for s in scored)
+        pillars.append(
+            PillarScore(
+                pillar_id=pillar.id,
+                points=points,
+                max_points=max_points,
+                percent=round(points * 100 / max_points, 1) if max_points else None,
+                answered=len(answered),
+                total=len(scored),
+                ems_points=round(sum(contribution(s) for s in scored), 2),
+                ems_max=round(sum(s.ems_weight for s in scored), 2),
+            )
+        )
+
+    axes: list[AxisScore] = []
+    for step in sorted(catalog.steps, key=lambda s: s.order):
+        if step.kind is not StepKind.AXIS:
+            continue
+        if step.id not in available:
+            axes.append(AxisScore(step_id=step.id, status=AxisStatus.MAINTENANCE))
+            continue
+        scored = [s for s in scores if s.step_id == step.id]
+        ems_points = round(sum(contribution(s) for s in scored), 2)
+        ems_max = round(sum(s.ems_weight for s in scored), 2)
+        axes.append(
+            AxisScore(
+                step_id=step.id,
+                status=AxisStatus.EVALUATED,
+                scored_questions=len(scored),
+                points=round(sum(pts(s) or 0.0 for s in scored), 2),
+                max_points=sum(s.max_points for s in scored),
+                ems_points=ems_points,
+                ems_max=ems_max,
+                percent=round(ems_points * 100 / ems_max, 1) if ems_max else None,
+            )
+        )
+
+    ems = EmsScore(
+        points=round(sum(contribution(s) for s in scores), 2),
+        max_available=round(sum(s.ems_weight for s in scores), 2),
+    )
+    return ScoreSet(aggregation=aggregation, pillars=pillars, axes=axes, ems=ems)
 
 
 def evaluate(
     catalog: Catalog,
     values: Mapping[str, AnswerValue],
     *,
+    items: Sequence[ItemRef] = (),
     available_step_ids: Collection[str] | None = None,
 ) -> Evaluation:
     """Calcula progresso, pilares, eixos, EMS e alertas.
 
-    ``available_step_ids`` permite reproduzir um diagnóstico concluído com as
-    etapas que estavam disponíveis na conclusão (padrão: as do catálogo).
+    ``items`` são os produtos/resíduos cadastrados. ``available_step_ids``
+    permite reproduzir um diagnóstico concluído com as etapas que estavam
+    disponíveis na conclusão (padrão: as do catálogo).
     """
     available = (
         set(available_step_ids)
         if available_step_ids is not None
         else {s.id for s in catalog.available_steps()}
     )
-    visible = visible_questions(catalog, values)
-    visible_ids = {q.id for q in visible}
+    all_instances = question_instances(catalog, items)
+    visible = visible_instances(catalog, values, items)
+    visible_keys = {inst.key for inst in visible}
 
     steps: list[StepProgress] = []
     required_total = 0
@@ -254,14 +522,16 @@ def evaluate(
         if step.id not in available:
             steps.append(StepProgress(step_id=step.id, status=StepStatus.MAINTENANCE))
             continue
-        questions = catalog.questions_for_step(step.id)
         progress = StepProgress(step_id=step.id, status=StepStatus.NOT_STARTED)
         any_answered = False
-        for question in questions:
-            if question.id not in visible_ids:
+        for instance in all_instances:
+            question = instance.question
+            if question.step_id != step.id:
+                continue
+            if instance.key not in visible_keys:
                 progress.not_applicable += 1
                 continue
-            answered = is_answered(values.get(question.id))
+            answered = instance_answered(instance, values, items)
             if not question.read_only:
                 # Dados cadastrais travados não indicam que a etapa foi iniciada.
                 any_answered = any_answered or answered
@@ -270,7 +540,7 @@ def evaluate(
                 if answered:
                     progress.required_answered += 1
                 else:
-                    progress.missing_required.append(question.id)
+                    progress.missing_required.append(instance.key)
             else:
                 progress.optional_total += 1
                 if answered:
@@ -284,76 +554,16 @@ def evaluate(
         required_answered += progress.required_answered
         steps.append(progress)
 
-    available_step_ids = available
-    pillars: list[PillarScore] = []
-    ems_points = 0.0
-    ems_max = 0.0
-    for pillar in catalog.pillars:
-        scored = [
-            q
-            for q in visible
-            if q.scored and q.pillar_id == pillar.id and q.step_id in available_step_ids
-        ]
-        points = 0
-        answered = 0
-        pillar_ems = 0.0
-        for question in scored:
-            score = score_for(question, values.get(question.id))
-            if score is not None:
-                points += score
-                answered += 1
-                pillar_ems += ems_contribution(question, values.get(question.id)) or 0.0
-        max_points = sum(q.max_points for q in scored)
-        pillars.append(
-            PillarScore(
-                pillar_id=pillar.id,
-                points=points,
-                max_points=max_points,
-                percent=round(points * 100 / max_points, 1) if max_points else None,
-                answered=answered,
-                total=len(scored),
-                ems_points=round(pillar_ems, 2),
-                ems_max=round(sum(q.ems_weight or 0.0 for q in scored), 2),
-            )
-        )
-    for question in visible:
-        if not question.scored or question.step_id not in available_step_ids:
-            continue
-        weight = question.ems_weight or 0.0
-        ems_max += weight
-        score = score_for(question, values.get(question.id))
-        if score is not None and question.max_points:
-            ems_points += score / question.max_points * weight
-
-    axes: list[AxisScore] = []
-    for step in sorted(catalog.steps, key=lambda s: s.order):
-        if step.kind is not StepKind.AXIS:
-            continue
-        if step.id not in available_step_ids:
-            axes.append(AxisScore(step_id=step.id, status=AxisStatus.MAINTENANCE))
-            continue
-        scored = [q for q in visible if q.scored and q.step_id == step.id]
-        axis = AxisScore(
-            step_id=step.id,
-            status=AxisStatus.EVALUATED,
-            scored_questions=len(scored),
-            max_points=sum(q.max_points for q in scored),
-            ems_max=sum(q.ems_weight or 0.0 for q in scored),
-        )
-        for question in scored:
-            value = values.get(question.id)
-            axis.points += score_for(question, value) or 0
-            axis.ems_points += ems_contribution(question, value) or 0.0
-        axis.ems_points = round(axis.ems_points, 2)
-        axis.ems_max = round(axis.ems_max, 2)
-        axis.percent = round(axis.ems_points * 100 / axis.ems_max, 1) if axis.ems_max else None
-        axes.append(axis)
+    question_scores = _question_scores(catalog, visible, values, available)
+    main = _score_set(catalog, question_scores, available, ScoreAggregation.AVERAGE)
+    worst = _score_set(catalog, question_scores, available, ScoreAggregation.WORST)
 
     alerts: list[Alert] = []
-    for question in visible:
-        if question.step_id not in available_step_ids:
+    for instance in visible:
+        question = instance.question
+        if question.step_id not in available:
             continue
-        value = values.get(question.id)
+        value = values.get(instance.key)
         selected = [value] if isinstance(value, str) else (value or [])
         for item in selected:
             option = question.option(item) if question.options else None
@@ -363,24 +573,28 @@ def evaluate(
                         question_id=question.id,
                         level=option.alert_level.value,
                         message=option.alert_message or option.label,
+                        item_id=instance.item_id,
                     )
                 )
 
     return Evaluation(
         alerts=alerts,
-        axes=axes,
+        axes=main.axes,
         steps=steps,
         progress=_percent(required_answered, required_total),
         required_total=required_total,
         required_answered=required_answered,
-        pillars=pillars,
-        ems=EmsScore(points=round(ems_points, 2), max_available=round(ems_max, 2)),
+        pillars=main.pillars,
+        ems=main.ems,
         complete=required_answered == required_total,
-        visible_question_ids=[q.id for q in visible],
+        visible_question_ids=[inst.key for inst in visible],
+        question_scores=question_scores,
+        worst_case=worst,
     )
 
 
 __all__ = [
+    "ITEM_KEY_SEPARATOR",
     "Alert",
     "AnswerValue",
     "AxisScore",
@@ -390,13 +604,26 @@ __all__ = [
     "EmsScore",
     "Evaluation",
     "InvalidAnswerError",
+    "ItemRef",
+    "ItemScore",
     "PillarScore",
+    "QuestionInstance",
+    "QuestionScore",
+    "ScoreAggregation",
+    "ScoreSet",
     "StepProgress",
     "StepStatus",
     "evaluate",
+    "instance_answered",
     "is_answered",
     "is_visible",
+    "items_of",
     "normalize_answer",
+    "points_contribution",
+    "question_instances",
+    "response_key",
     "score_for",
+    "split_key",
+    "visible_instances",
     "visible_questions",
 ]

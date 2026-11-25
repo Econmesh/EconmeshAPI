@@ -16,6 +16,12 @@ Ex.: a Q31 aparece no Eixo 1 (Fluxos de Materiais), mas pontua no Pilar 2
 Para ativar os Eixos 2–4 basta incluir suas perguntas e trocar a
 ``availability`` da etapa para ``AVAILABLE`` — progresso, conclusão e
 pontuação passam a considerá-los automaticamente.
+
+**Itens dinâmicos (produtos e resíduos).** Perguntas do tipo ``ITEM_LIST``
+(1.1 e 1.7) são cadastros: a empresa registra vários produtos/resíduos. Cada
+pergunta com ``per_item`` é respondida uma vez *para cada item* daquele tipo —
+a resposta é gravada na chave ``"<pergunta>@<item>"``. Condições (``show_if``)
+entre perguntas do mesmo tipo de item são avaliadas dentro do próprio item.
 """
 
 from __future__ import annotations
@@ -24,7 +30,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CATALOG_VERSION = "2026-10.5"
+CATALOG_VERSION = "2026-11.1"
 
 
 class StepKind(StrEnum):
@@ -37,6 +43,13 @@ class StepAvailability(StrEnum):
     MAINTENANCE = "maintenance"
 
 
+class ItemKind(StrEnum):
+    """Tipos de item cadastráveis no diagnóstico."""
+
+    PRODUCT = "product"
+    WASTE = "waste"
+
+
 class QuestionType(StrEnum):
     TEXT = "text"
     LONG_TEXT = "long_text"
@@ -45,6 +58,8 @@ class QuestionType(StrEnum):
     TAX_ID = "tax_id"
     SINGLE_CHOICE = "single_choice"
     MULTI_CHOICE = "multi_choice"
+    #: Cadastro de itens (produtos/resíduos) — respondido pelos endpoints de itens.
+    ITEM_LIST = "item_list"
 
 
 class ConditionOperator(StrEnum):
@@ -124,6 +139,11 @@ class Question(_Frozen):
     # ---- origem cadastral
     registry_field: RegistryField | None = None
     read_only: bool = False
+    # ---- itens dinâmicos
+    #: Pergunta respondida uma vez para cada item deste tipo.
+    per_item: ItemKind | None = None
+    #: Para ``ITEM_LIST``: tipo de item cadastrado pela pergunta.
+    item_kind: ItemKind | None = None
 
     @property
     def max_points(self) -> int:
@@ -133,11 +153,33 @@ class Question(_Frozen):
         return next((opt for opt in self.options if opt.value == value), None)
 
 
+class ItemReference(_Frozen):
+    """Bloco somente leitura que reflete, por item, respostas dadas em outra etapa."""
+
+    kind: ItemKind
+    question_ids: tuple[str, ...]
+    title: str
+    description: str | None = None
+
+
 class Section(_Frozen):
     id: str
     step_id: str
     title: str
     description: str | None = None
+    #: Reflexo por item (ex.: classificação 1.8 de cada resíduo no Eixo 3).
+    item_reference: ItemReference | None = None
+
+
+class ItemKindMeta(_Frozen):
+    kind: ItemKind
+    label: str
+    plural: str
+    #: Pergunta ``ITEM_LIST`` que cadastra os itens deste tipo.
+    list_question_id: str
+    #: Rótulo do campo descritivo opcional do item.
+    description_label: str
+    max_items: int = 50
 
 
 class Step(_Frozen):
@@ -157,6 +199,10 @@ class Catalog(_Frozen):
     sections: tuple[Section, ...]
     questions: tuple[Question, ...]
     pillars: tuple[Pillar, ...]
+    item_kinds: tuple[ItemKindMeta, ...] = ()
+
+    def item_kind(self, kind: ItemKind | str) -> ItemKindMeta | None:
+        return next((meta for meta in self.item_kinds if meta.kind == kind), None)
 
     def step(self, step_id: str) -> Step | None:
         return next((s for s in self.steps if s.id == step_id), None)
@@ -293,6 +339,15 @@ _SECTIONS = (
         id="esg_licensing",
         step_id=STEP_ESG,
         title="Licenciamento e rastreabilidade",
+        item_reference=ItemReference(
+            kind=ItemKind.WASTE,
+            question_ids=("q15",),
+            title="Classificação dos resíduos (pergunta 1.8)",
+            description=(
+                "Reflexo da classificação informada para cada resíduo no Eixo 1. Para "
+                "alterar, edite a pergunta 1.8 no Mapeamento de resíduos."
+            ),
+        ),
     ),
     Section(
         id="esg_chain",
@@ -384,28 +439,37 @@ _QUESTIONS = (
     # ------------------------- Eixo 1 — 1. Mapeamento de produção e insumos
     Question(
         id="q09", code="1.1", number=9, step_id=_FM, section_id="fm_production",
-        label="Principais produtos fabricados", type=QuestionType.LONG_TEXT,
+        label="Principais produtos fabricados", type=QuestionType.ITEM_LIST,
+        item_kind=ItemKind.PRODUCT,
+        help_text=(
+            "Cadastre cada produto. As perguntas 1.2 a 1.6 e a seção Destinação e mercado "
+            "de resíduos (Eixo 2) serão respondidas para cada produto."
+        ),
         objective="Contextualização e mapeamento da produção.",
     ),
     Question(
         id="q10", code="1.2", number=10, step_id=_FM, section_id="fm_production",
+        per_item=ItemKind.PRODUCT,
         label="Principais matérias-primas utilizadas (tipo e volume médio mensal)",
         type=QuestionType.LONG_TEXT,
         objective="Mapeamento dos principais insumos.",
     ),
     Question(
         id="q11", code="1.3", number=11, step_id=_FM, section_id="fm_production",
+        per_item=ItemKind.PRODUCT,
         label="Existe dependência de insumos provenientes de fora do estado ou país?",
         type=QuestionType.SINGLE_CHOICE, options=_YES_NO,
     ),
     Question(
         id="q12", code="1.4", number=12, step_id=_FM, section_id="fm_production",
+        per_item=ItemKind.PRODUCT,
         label="Quais insumos possuem maior dependência externa?",
         type=QuestionType.LONG_TEXT,
         show_if=(Condition(question_id="q11", operator=ConditionOperator.IN, values=("sim",)),),
     ),
     Question(
         id="q13", code="1.5", number=13, step_id=_FM, section_id="fm_production",
+        per_item=ItemKind.PRODUCT,
         label="Essa dependência impacta custos logísticos?",
         type=QuestionType.SINGLE_CHOICE,
         options=(
@@ -416,6 +480,7 @@ _QUESTIONS = (
     ),
     Question(
         id="q37", code="1.6", number=37, step_id=_FM, section_id="fm_production",
+        per_item=ItemKind.PRODUCT,
         label=(
             "Qual o índice estimado de perda de matéria-prima convertida em "
             "resíduos/refugo?"
@@ -435,11 +500,17 @@ _QUESTIONS = (
     # ------------------------------------- Eixo 1 — 2. Mapeamento de resíduos
     Question(
         id="q14", code="1.7", number=14, step_id=_FM, section_id="fm_waste",
-        label="Principais resíduos ou subprodutos gerados (tipo e volume médio mensal)",
-        type=QuestionType.LONG_TEXT,
+        label="Principais resíduos ou subprodutos gerados",
+        type=QuestionType.ITEM_LIST, item_kind=ItemKind.WASTE,
+        help_text=(
+            "Cadastre cada resíduo ou subproduto (tipo e volume médio mensal). As perguntas "
+            "1.8 a 1.15 e os Custos de gestão de resíduos (Eixo 4) serão respondidos para "
+            "cada resíduo."
+        ),
     ),
     Question(
         id="q15", code="1.8", number=15, step_id=_FM, section_id="fm_waste",
+        per_item=ItemKind.WASTE,
         label="Classificação predominante dos resíduos", type=QuestionType.SINGLE_CHOICE,
         options=(
             Option(value="nao_perigosos", label="Não perigosos"),
@@ -449,6 +520,7 @@ _QUESTIONS = (
     ),
     Question(
         id="q29", code="1.9", number=29, step_id=_FM, section_id="fm_waste",
+        per_item=ItemKind.WASTE,
         label="Qual a classificação normativa predominante dos resíduos gerados?",
         type=QuestionType.SINGLE_CHOICE,
         options=(
@@ -460,6 +532,7 @@ _QUESTIONS = (
     ),
     Question(
         id="q16", code="1.10", number=16, step_id=_FM, section_id="fm_waste",
+        per_item=ItemKind.WASTE,
         label="Qual a frequência de geração?", type=QuestionType.SINGLE_CHOICE,
         options=(
             Option(value="diaria", label="Diária"),
@@ -470,7 +543,8 @@ _QUESTIONS = (
     ),
     Question(
         id="q28", code="1.11", number=28, step_id=_FM, section_id="fm_waste",
-        label="Como é feita a segregação do resíduo na fonte geradora?",
+        per_item=ItemKind.WASTE,
+        label="Como você avalia o processo de segregação dos resíduos no local onde são gerados?",
         type=QuestionType.SINGLE_CHOICE,
         options=(
             Option(value="excelente", label="Excelente", points=40),
@@ -481,6 +555,7 @@ _QUESTIONS = (
     ),
     Question(
         id="q17", code="1.12", number=17, step_id=_FM, section_id="fm_waste",
+        per_item=ItemKind.WASTE,
         label="Existe tratamento interno antes da destinação?",
         type=QuestionType.SINGLE_CHOICE,
         options=(
@@ -491,6 +566,7 @@ _QUESTIONS = (
     ),
     Question(
         id="q18", code="1.13", number=18, step_id=_FM, section_id="fm_waste",
+        per_item=ItemKind.WASTE,
         label="Descrever o tipo de tratamento realizado", type=QuestionType.LONG_TEXT,
         show_if=(
             Condition(
@@ -500,6 +576,7 @@ _QUESTIONS = (
     ),
     Question(
         id="q19", code="1.14", number=19, step_id=_FM, section_id="fm_waste",
+        per_item=ItemKind.WASTE,
         label="Qual o destino principal dos resíduos?", type=QuestionType.MULTI_CHOICE,
         help_text="Selecione todas as opções aplicáveis.",
         options=(
@@ -513,6 +590,7 @@ _QUESTIONS = (
     ),
     Question(
         id="q19_other", step_id=_FM, section_id="fm_waste",
+        per_item=ItemKind.WASTE,
         label="Descreva o outro destino", type=QuestionType.TEXT, max_length=500,
         show_if=(
             Condition(
@@ -522,6 +600,7 @@ _QUESTIONS = (
     ),
     Question(
         id="q31", code="1.15", number=31, step_id=_FM, section_id="fm_waste",
+        per_item=ItemKind.WASTE,
         label="Como se comporta a regularidade do fornecimento para uma indústria receptora?",
         type=QuestionType.SINGLE_CHOICE,
         options=(
@@ -547,6 +626,7 @@ _QUESTIONS = (
     # ----------------------- Eixo 2 — 1. Destinação e mercado de resíduos
     Question(
         id="ps_q25", code="2.1", number=25, step_id=_PS, section_id="ps_destination_market",
+        per_item=ItemKind.PRODUCT,
         label="Qual o modelo predominante de rastreabilidade e destinação final adotado?",
         type=QuestionType.SINGLE_CHOICE,
         options=(
@@ -562,11 +642,13 @@ _QUESTIONS = (
     ),
     Question(
         id="ps_q26", code="2.2", number=26, step_id=_PS, section_id="ps_destination_market",
+        per_item=ItemKind.PRODUCT,
         label="Algum resíduo gera receita para a empresa?",
         type=QuestionType.SINGLE_CHOICE, options=_YES_NO,
     ),
     Question(
         id="ps_q27", code="2.3", number=27, step_id=_PS, section_id="ps_destination_market",
+        per_item=ItemKind.PRODUCT,
         label="Qual resíduo gera receita e como ocorre a comercialização?",
         type=QuestionType.LONG_TEXT,
         show_if=(
@@ -575,6 +657,7 @@ _QUESTIONS = (
     ),
     Question(
         id="ps_q28", code="2.4", number=28, step_id=_PS, section_id="ps_destination_market",
+        per_item=ItemKind.PRODUCT,
         label=(
             "Qual a percepção de mercado ou demanda regional para o subproduto no Nordeste?"
         ),
@@ -756,7 +839,8 @@ _QUESTIONS = (
     # ------------------------ Eixo 4 — 1. Custos de gestão de resíduos
     Question(
         id="ve_q44", code="4.1", number=44, step_id=_VE, section_id="ve_costs",
-        label="Como classifica o custo atual de descarte e logística associada?",
+        per_item=ItemKind.WASTE,
+        label="Como classifica o custo atual de descarte e logística associada a este resíduo?",
         type=QuestionType.SINGLE_CHOICE,
         options=(
             Option(value="alto", label="Alto", points=35),
@@ -768,7 +852,8 @@ _QUESTIONS = (
     ),
     Question(
         id="ve_q45", code="4.2", number=45, step_id=_VE, section_id="ve_costs",
-        label="Qual o custo mensal aproximado total com gestão de resíduos?",
+        per_item=ItemKind.WASTE,
+        label="Qual o custo mensal aproximado com a gestão deste resíduo?",
         type=QuestionType.SINGLE_CHOICE,
         options=(
             Option(value="acima_50000", label="Acima de R$ 50.000", points=20),
@@ -780,7 +865,8 @@ _QUESTIONS = (
     ),
     Question(
         id="ve_q47", code="4.3", number=47, step_id=_VE, section_id="ve_costs",
-        label="Custo mensal aproximado total com gestão de resíduos (detalhamento)",
+        per_item=ItemKind.WASTE,
+        label="Custo mensal aproximado com a gestão deste resíduo (detalhamento)",
         type=QuestionType.LONG_TEXT, required=False,
         help_text=(
             "Descreva a composição do custo (coleta, transporte, destinação, taxas)."
@@ -812,12 +898,32 @@ _QUESTIONS = (
     ),
 )
 
+_ITEM_KINDS = (
+    ItemKindMeta(
+        kind=ItemKind.PRODUCT,
+        label="Produto",
+        plural="Produtos",
+        list_question_id="q09",
+        description_label="Descrição (opcional)",
+        max_items=30,
+    ),
+    ItemKindMeta(
+        kind=ItemKind.WASTE,
+        label="Resíduo",
+        plural="Resíduos",
+        list_question_id="q14",
+        description_label="Tipo e volume médio mensal (opcional)",
+        max_items=50,
+    ),
+)
+
 CATALOG = Catalog(
     version=CATALOG_VERSION,
     steps=_STEPS,
     sections=_SECTIONS,
     questions=_QUESTIONS,
     pillars=_PILLARS,
+    item_kinds=_ITEM_KINDS,
 )
 
 
@@ -832,6 +938,9 @@ __all__ = [
     "Catalog",
     "Condition",
     "ConditionOperator",
+    "ItemKind",
+    "ItemKindMeta",
+    "ItemReference",
     "Option",
     "Pillar",
     "Question",

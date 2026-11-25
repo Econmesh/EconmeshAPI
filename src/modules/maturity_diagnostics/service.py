@@ -21,6 +21,7 @@ from src.modules.dmc.audit import AuditLog
 from src.modules.dmc.scope import PortfolioScope, ScopeService
 from src.modules.maturity_diagnostics.catalog import (
     Catalog,
+    ItemKind,
     Question,
     QuestionType,
     RegistryField,
@@ -32,11 +33,15 @@ from src.modules.maturity_diagnostics.engine import (
     Evaluation,
     InvalidAnswerError,
     evaluate,
+    items_of,
     normalize_answer,
     score_for,
+    split_key,
 )
+from src.modules.maturity_diagnostics.items import migrate_legacy, new_item_id
 from src.modules.maturity_diagnostics.model import (
     CompanySnapshot,
+    DiagnosticItem,
     DiagnosticResponse,
     DiagnosticStatus,
     MaturityDiagnosticDocument,
@@ -52,6 +57,9 @@ from src.modules.maturity_diagnostics.schema import (
     DiagnosticDetail,
     DiagnosticListResponse,
     DiagnosticSummary,
+    ItemCreate,
+    ItemOut,
+    ItemUpdate,
     ResponseOut,
     SaveResponsesRequest,
 )
@@ -107,7 +115,31 @@ class MaturityDiagnosticsService:
                 "This diagnostic belongs to another DMC agent.",
                 code="diagnostic_other_agent",
             )
-        return agent, scope, diagnostic, company
+        return agent, scope, await self._migrated(diagnostic), company
+
+    async def _migrated(
+        self, diagnostic: MaturityDiagnosticDocument
+    ) -> MaturityDiagnosticDocument:
+        """Compatibilidade: converte diagnósticos antigos (1.1/1.7 em texto livre).
+
+        Abertos: a conversão é persistida. Concluídos: apenas em memória (o
+        documento concluído não é alterado).
+        """
+        responses, items, changed = migrate_legacy(
+            self._catalog, diagnostic.responses, diagnostic.items
+        )
+        if not changed:
+            return diagnostic
+        if diagnostic.is_open:
+            saved = await self._repo.replace_items_and_responses(diagnostic.id, items, responses)
+            if saved is not None:
+                logger.info(
+                    "maturity_diagnostic_items_migrated",
+                    diagnostic_id=str(diagnostic.id),
+                    items=len(items),
+                )
+                return saved
+        return diagnostic.model_copy(update={"responses": responses, "items": items})
 
     # -------------------------------------------------------------- leitura
     def catalog(self) -> Catalog:
@@ -198,7 +230,7 @@ class MaturityDiagnosticsService:
                     "Another DMC agent has an open diagnostic for this company.",
                     code="diagnostic_open_by_other_agent",
                 )
-            return self._detail(existing, company, agent), False
+            return self._detail(await self._migrated(existing), company, agent), False
 
         responses = await self._registry_prefill(company, agent.id)
         values = {qid: resp.value for qid, resp in responses.items()}
@@ -286,23 +318,38 @@ class MaturityDiagnosticsService:
         updates: dict[str, DiagnosticResponse] = {}
         now = utcnow()
         for answer in payload.answers:
-            question = self._catalog.question(answer.question_id)
+            # Chave: ``<pergunta>`` ou ``<pergunta>@<item>`` (perguntas por item).
+            key = answer.question_id
+            question_id, item_id = split_key(key)
+            question = self._catalog.question(question_id)
             if question is None:
-                errors[answer.question_id] = "Pergunta desconhecida."
+                errors[key] = "Pergunta desconhecida."
                 continue
             step = self._catalog.step(question.step_id)
             if step is None or step.availability is not StepAvailability.AVAILABLE:
-                errors[question.id] = "Etapa em manutenção."
+                errors[key] = "Etapa em manutenção."
                 continue
             if question.read_only:
-                errors[question.id] = "Dado cadastral não editável no diagnóstico."
+                errors[key] = "Dado cadastral não editável no diagnóstico."
+                continue
+            if question.per_item is not None:
+                item = diagnostic.item(item_id) if item_id else None
+                if item is None or item.kind != question.per_item:
+                    errors[key] = (
+                        "Item não encontrado (pode ter sido excluído)."
+                        if item_id
+                        else "Informe o item desta resposta."
+                    )
+                    continue
+            elif item_id is not None:
+                errors[key] = "Esta pergunta é respondida uma única vez por empresa."
                 continue
             try:
                 value = normalize_answer(question, answer.value)
             except InvalidAnswerError as exc:
-                errors[question.id] = exc.message
+                errors[key] = exc.message
                 continue
-            previous = diagnostic.responses.get(question.id)
+            previous = diagnostic.responses.get(key)
             if (
                 previous is not None
                 and answer.edited_at is not None
@@ -310,7 +357,7 @@ class MaturityDiagnosticsService:
             ):
                 # Edição offline mais antiga que a gravada: mantém a do servidor.
                 continue
-            updates[question.id] = _build_response(question, value, previous, agent.id, now)
+            updates[key] = _build_response(question, value, previous, agent.id, now)
 
         if errors:
             raise ValidationAppError(
@@ -335,7 +382,9 @@ class MaturityDiagnosticsService:
     async def _refresh_evaluation(
         self, diagnostic: MaturityDiagnosticDocument
     ) -> MaturityDiagnosticDocument:
-        evaluation = evaluate(self._catalog, diagnostic.answer_values())
+        evaluation = evaluate(
+            self._catalog, diagnostic.answer_values(), items=diagnostic.items
+        )
         patch: dict[str, Any] = {
             "progress": evaluation.progress,
             "evaluation": evaluation.model_dump(mode="python"),
@@ -347,6 +396,117 @@ class MaturityDiagnosticsService:
         updated = await self._repo.update(diagnostic.id, patch)
         return updated or diagnostic
 
+    # ------------------------------------------------- itens (produtos/resíduos)
+    def _validate_item_fields(
+        self,
+        diagnostic: MaturityDiagnosticDocument,
+        kind: ItemKind,
+        name: str,
+        *,
+        exclude_id: str | None = None,
+    ) -> str:
+        clean = " ".join(name.split())
+        if not clean:
+            raise ValidationAppError(
+                "Item name is required.",
+                code="validation_error",
+                details={"errors": {"name": "Informe o nome."}},
+            )
+        meta = self._catalog.item_kind(kind)
+        label = meta.label.lower() if meta else "item"
+        duplicate = any(
+            item.kind == kind and item.id != exclude_id and item.name.casefold() == clean.casefold()
+            for item in diagnostic.items
+        )
+        if duplicate:
+            raise ValidationAppError(
+                "An item with this name already exists.",
+                code="item_duplicate_name",
+                details={"errors": {"name": f"Já existe um {label} com esse nome."}},
+            )
+        return clean
+
+    async def add_item(
+        self, firebase_uid: str, diagnostic_id: UUID, payload: ItemCreate
+    ) -> DiagnosticDetail:
+        """Cadastra um produto (1.1) ou resíduo (1.7) — gera suas perguntas nos eixos."""
+        agent, _, diagnostic, company = await self._load_owned(firebase_uid, diagnostic_id)
+        self._ensure_editable(diagnostic)
+        meta = self._catalog.item_kind(payload.kind)
+        if meta is None:
+            raise ValidationAppError("Invalid item kind.", code="invalid_item_kind")
+        if len(items_of(diagnostic.items, payload.kind)) >= meta.max_items:
+            raise ValidationAppError(
+                "Maximum number of items reached.",
+                code="item_limit_reached",
+                details={"errors": {"name": f"Limite de {meta.max_items} itens atingido."}},
+            )
+        name = self._validate_item_fields(diagnostic, payload.kind, payload.name)
+        description = (payload.description or "").strip() or None
+        now = utcnow()
+        item = DiagnosticItem(
+            id=new_item_id(),
+            kind=payload.kind,
+            name=name,
+            description=description,
+            created_at=now,
+            updated_at=now,
+        )
+        saved = await self._repo.add_item(diagnostic.id, item)
+        if saved is None:
+            raise ConflictError(
+                "This diagnostic can no longer be edited.", code="diagnostic_closed"
+            )
+        saved = await self._refresh_evaluation(saved)
+        return self._detail(saved, company, agent)
+
+    async def update_item(
+        self, firebase_uid: str, diagnostic_id: UUID, item_id: str, payload: ItemUpdate
+    ) -> DiagnosticDetail:
+        """Renomeia/descreve o item; as respostas continuam vinculadas pelo id."""
+        agent, _, diagnostic, company = await self._load_owned(firebase_uid, diagnostic_id)
+        self._ensure_editable(diagnostic)
+        item = diagnostic.item(item_id)
+        if item is None:
+            raise NotFoundError("Item not found.", code="item_not_found")
+        updated = item.model_copy()
+        if "name" in payload.model_fields_set and payload.name is not None:
+            updated.name = self._validate_item_fields(
+                diagnostic, item.kind, payload.name, exclude_id=item.id
+            )
+        if "description" in payload.model_fields_set:
+            updated.description = (payload.description or "").strip() or None
+        updated.updated_at = utcnow()
+        saved = await self._repo.update_item(diagnostic.id, updated)
+        if saved is None:
+            raise ConflictError(
+                "This diagnostic can no longer be edited.", code="diagnostic_closed"
+            )
+        return self._detail(saved, company, agent)
+
+    async def delete_item(
+        self, firebase_uid: str, diagnostic_id: UUID, item_id: str
+    ) -> DiagnosticDetail:
+        """Exclui o item e todas as respostas vinculadas a ele (em todos os eixos)."""
+        agent, _, diagnostic, company = await self._load_owned(firebase_uid, diagnostic_id)
+        self._ensure_editable(diagnostic)
+        if diagnostic.item(item_id) is None:
+            raise NotFoundError("Item not found.", code="item_not_found")
+        keys = [key for key in diagnostic.responses if split_key(key)[1] == item_id]
+        saved = await self._repo.delete_item(diagnostic.id, item_id, keys)
+        if saved is None:
+            raise ConflictError(
+                "This diagnostic can no longer be edited.", code="diagnostic_closed"
+            )
+        saved = await self._refresh_evaluation(saved)
+        logger.info(
+            "maturity_diagnostic_item_deleted",
+            diagnostic_id=str(diagnostic.id),
+            item_id=item_id,
+            responses_removed=len(keys),
+        )
+        return self._detail(saved, company, agent)
+
     # ------------------------------------------------------------- conclusão
     async def validate_step(
         self, firebase_uid: str, diagnostic_id: UUID, step_id: str
@@ -357,7 +517,9 @@ class MaturityDiagnosticsService:
         step = self._catalog.step(step_id)
         if step is None or step.availability is not StepAvailability.AVAILABLE:
             raise ValidationAppError("Invalid step.", code="invalid_step")
-        evaluation = evaluate(self._catalog, diagnostic.answer_values())
+        evaluation = evaluate(
+            self._catalog, diagnostic.answer_values(), items=diagnostic.items
+        )
         progress = next(s for s in evaluation.steps if s.step_id == step_id)
         if progress.missing_required:
             raise ValidationAppError(
@@ -377,7 +539,9 @@ class MaturityDiagnosticsService:
     async def complete(self, firebase_uid: str, diagnostic_id: UUID) -> DiagnosticDetail:
         agent, _, diagnostic, company = await self._load_owned(firebase_uid, diagnostic_id)
         self._ensure_editable(diagnostic)
-        evaluation = evaluate(self._catalog, diagnostic.answer_values())
+        evaluation = evaluate(
+            self._catalog, diagnostic.answer_values(), items=diagnostic.items
+        )
         if not evaluation.complete:
             missing = [q for s in evaluation.steps for q in s.missing_required]
             raise ValidationAppError(
@@ -488,7 +652,7 @@ class MaturityDiagnosticsService:
         """Concluído: resultado congelado (versão do catálogo da época). Aberto: ao vivo."""
         if not diagnostic.is_open and diagnostic.result:
             return Evaluation.model_validate(diagnostic.result)
-        return evaluate(self._catalog, diagnostic.answer_values())
+        return evaluate(self._catalog, diagnostic.answer_values(), items=diagnostic.items)
 
     def _next_available_step(self, step_id: str) -> str | None:
         ordered = sorted(self._catalog.available_steps(), key=lambda s: s.order)
@@ -555,6 +719,7 @@ class MaturityDiagnosticsService:
                 )
                 for qid, resp in diagnostic.responses.items()
             },
+            items=[ItemOut.model_validate(item, from_attributes=True) for item in diagnostic.items],
             evaluation=evaluation,
             can_edit=diagnostic.is_open,
         )
