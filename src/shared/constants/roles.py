@@ -17,9 +17,13 @@ class Role(StrEnum):
     ANALYST = "analyst"
     VIEWER = "viewer"
     SERVICE = "service"
+    DMC_AGENT = "dmc_agent"
 
 
 DEFAULT_ROLE: Role = Role.VIEWER
 
+# Roles allowed to sign in to the administrative panel.
+PANEL_ROLES: frozenset[Role] = frozenset({Role.ADMIN, Role.DMC_AGENT})
 
-__all__ = ["DEFAULT_ROLE", "Role"]
+
+__all__ = ["DEFAULT_ROLE", "PANEL_ROLES", "Role"]

@@ -37,11 +37,13 @@ class SupportAuthorRole(StrEnum):
     USER = "user"
     ADMIN = "admin"
     VISITOR = "visitor"
+    DMC_AGENT = "dmc_agent"
 
 
 class SupportMessageType(StrEnum):
     USER_MESSAGE = "user_message"
     ADMIN_REPLY = "admin_reply"
+    AGENT_REPLY = "agent_reply"
     INTERNAL_NOTE = "internal_note"
 
 
@@ -70,6 +72,7 @@ class SupportTicketDocument(DomainDocument):
     subject: str
     status: SupportTicketStatus = SupportTicketStatus.OPEN
     assigned_admin_id: UUID | None = None
+    assigned_agent_id: UUID | None = None
     closed_by: UUID | None = None
     closed_at: datetime | None = None
     last_message_at: datetime | None = None

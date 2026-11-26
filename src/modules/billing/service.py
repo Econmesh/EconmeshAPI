@@ -617,7 +617,9 @@ class BillingService:
             excluded_ids, skip=pagination.skip, limit=pagination.limit
         )
         total = await self._companies_repo.count_active_except(excluded_ids)
-        owners = await self._auth_repo.get_by_ids([c.owner_user_id for c in companies])
+        owners = await self._auth_repo.get_by_ids(
+            [c.owner_user_id for c in companies if c.owner_user_id]
+        )
         owners_map = {u.id: u for u in owners}
         items = [
             AdminPendingUserItem(
@@ -634,6 +636,7 @@ class BillingService:
                 created_at=company.created_at,
             )
             for company in companies
+            if company.owner_user_id is not None
         ]
         return AdminPendingUserListResponse(
             items=items,
@@ -694,13 +697,16 @@ class BillingService:
         self, q: str
     ) -> AccessGrantTargetListResponse:
         try:
-            companies = await self._companies_repo.list_all(skip=0, limit=200)
+            companies = await self._companies_repo.list_all(
+                skip=0, limit=200, include_pre_registered=False
+            )
         except Exception:  # noqa: BLE001
             logger.exception("access_grant_target_company_list_failed")
             companies = []
         try:
             owners = await self._auth_repo.get_by_ids(
-                [c.owner_user_id for c in companies], active_only=False
+                [c.owner_user_id for c in companies if c.owner_user_id],
+                active_only=False,
             )
         except Exception:  # noqa: BLE001
             logger.exception("access_grant_target_owners_failed")
@@ -708,6 +714,8 @@ class BillingService:
         owners_map = {u.id: u for u in owners}
         items: list[AccessGrantTarget] = []
         for company in companies:
+            if company.owner_user_id is None:
+                continue
             owner = owners_map.get(company.owner_user_id)
             if owner is not None and owner.role == Role.ADMIN:
                 continue

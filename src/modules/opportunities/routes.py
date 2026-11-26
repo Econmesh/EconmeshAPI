@@ -22,8 +22,10 @@ from src.modules.opportunities.schema import (
     OpportunityUpdate,
 )
 from src.modules.opportunities.service import OpportunitiesService
+from src.shared.constants.roles import Role
 from src.shared.dependencies.auth import CurrentUserDep
 from src.shared.dependencies.db import get_db
+from src.shared.dependencies.rbac import reject_roles
 from src.shared.schemas.responses import StorageUploadResponse
 
 if TYPE_CHECKING:
@@ -35,6 +37,8 @@ router = APIRouter(
 )
 
 _SUBSCRIPTION_REQUIRED = [Depends(require_active_subscription)]
+_DMC_READ_ONLY = [Depends(reject_roles(Role.DMC_AGENT))]
+_WRITE_GUARDS = [*_SUBSCRIPTION_REQUIRED, *_DMC_READ_ONLY]
 
 
 def _build_controller(
@@ -71,7 +75,7 @@ async def list_opportunities(
     response_model=OpportunityResponse,
     summary="Create a new opportunity.",
     status_code=status.HTTP_201_CREATED,
-    dependencies=_SUBSCRIPTION_REQUIRED,
+    dependencies=_WRITE_GUARDS,
 )
 async def create_opportunity(
     payload: OpportunityCreate,
@@ -86,7 +90,7 @@ async def create_opportunity(
     response_model=OpportunityImagePresignResponse,
     summary="Request a presigned URL to upload an opportunity image.",
     status_code=status.HTTP_200_OK,
-    dependencies=_SUBSCRIPTION_REQUIRED,
+    dependencies=_WRITE_GUARDS,
 )
 async def presign_opportunity_image(
     payload: OpportunityImagePresignRequest,
@@ -101,7 +105,7 @@ async def presign_opportunity_image(
     response_model=StorageUploadResponse,
     summary="Upload an opportunity image via the API (avoids browser CORS to Storage).",
     status_code=status.HTTP_200_OK,
-    dependencies=_SUBSCRIPTION_REQUIRED,
+    dependencies=_WRITE_GUARDS,
 )
 async def upload_opportunity_image(
     controller: ControllerDep,
@@ -131,7 +135,7 @@ async def get_opportunity(
     response_model=OpportunityResponse,
     summary="Update an opportunity.",
     status_code=status.HTTP_200_OK,
-    dependencies=_SUBSCRIPTION_REQUIRED,
+    dependencies=_WRITE_GUARDS,
 )
 async def update_opportunity(
     opportunity_id: UUID,
@@ -146,7 +150,7 @@ async def update_opportunity(
     "/{opportunity_id}",
     summary="Soft-delete an opportunity.",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=_SUBSCRIPTION_REQUIRED,
+    dependencies=_WRITE_GUARDS,
 )
 async def delete_opportunity(
     opportunity_id: UUID,

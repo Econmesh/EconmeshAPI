@@ -1,0 +1,884 @@
+"""Diagnóstico de Maturidade Circular: catálogo, motor de regras e serviço."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
+from uuid import uuid4
+
+import pytest
+from fastapi import FastAPI
+from httpx import AsyncClient
+
+from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationAppError
+from src.modules.auth.model import UserDocument
+from src.modules.companies.model import CompanyAddress, CompanyDocument
+from src.modules.dmc.model import DmcPortfolioLinkDocument, PortfolioSource
+from src.modules.dmc.scope import PortfolioScope
+from src.modules.maturity_diagnostics.catalog import (
+    CATALOG,
+    PILLAR_CL,
+    PILLAR_FM,
+    PILLAR_PS,
+    PILLAR_VE,
+    STEP_ECONOMIC,
+    STEP_ESG,
+    STEP_MATERIAL_FLOWS,
+    STEP_SYMBIOSIS,
+    ItemKind,
+    StepAvailability,
+)
+from src.modules.maturity_diagnostics.engine import (
+    InvalidAnswerError,
+    StepStatus,
+    evaluate,
+    normalize_answer,
+    response_key,
+    visible_questions,
+)
+from src.modules.maturity_diagnostics.model import (
+    DiagnosticItem,
+    DiagnosticResponse,
+    DiagnosticStatus,
+    MaturityDiagnosticDocument,
+    ResponseSource,
+)
+from src.modules.maturity_diagnostics.report_pdf import render_report_pdf, report_filename
+from src.modules.maturity_diagnostics.report_service import DiagnosticReportService
+from src.modules.maturity_diagnostics.schema import AnswerInput, SaveResponsesRequest
+from src.modules.maturity_diagnostics.service import MaturityDiagnosticsService
+from src.shared.constants.permissions import Permission, role_has_permission
+from src.shared.constants.roles import Role
+
+pytestmark = pytest.mark.unit
+
+IDENTIFICATION_ANSWERS = {
+    "q01": "Recicla Sul Ltda",
+    "q02": "11222333000181",
+    "q03": "Plásticos",
+    "q04": "51_200",
+    "q05": "Maria",
+    "q06": "Gerente",
+    "q07": "maria@reciclasul.com.br",
+    "q08": "51999990000",
+}
+PRODUCT = DiagnosticItem(id="prod00000001", kind=ItemKind.PRODUCT, name="Embalagens")
+WASTE = DiagnosticItem(id="resid0000001", kind=ItemKind.WASTE, name="Aparas")
+ITEMS = [PRODUCT, WASTE]
+
+
+def per_item(answers: dict[str, object], item: DiagnosticItem) -> dict[str, object]:
+    return {response_key(qid, item.id): value for qid, value in answers.items()}
+
+
+#: Eixo 1 — por produto (1.2–1.6) e por resíduo (1.8–1.15).
+PRODUCT_AXIS1 = {"q10": "PEAD 10 t/mês", "q11": "nao", "q13": "parcialmente", "q37": "entre_2_5"}
+WASTE_AXIS1 = {
+    "q15": "nao_perigosos",
+    "q16": "diaria",
+    "q17": "nao",
+    "q19": ["reciclagem", "venda"],
+    "q28": "excelente",
+    "q29": "classe_iia",
+    "q31": "sazonal",
+}
+#: Formato anterior (1.1 e 1.7 em texto livre, respostas únicas por empresa).
+LEGACY_AXIS1_ANSWERS = {
+    "q09": "Embalagens",
+    "q14": "Aparas 2 t/mês",
+    **PRODUCT_AXIS1,
+    **WASTE_AXIS1,
+    "q43": "planilhas",
+}
+AXIS1_ANSWERS = {
+    **per_item(PRODUCT_AXIS1, PRODUCT),
+    **per_item(WASTE_AXIS1, WASTE),
+    "q43": "planilhas",
+}
+PRODUCT_AXIS2 = {"ps_q25": "coprocessamento_reciclagem", "ps_q26": "nao", "ps_q28": "media"}
+WASTE_AXIS4 = {"ve_q44": "alto", "ve_q45": "10001_50000"}
+AXIS2_ANSWERS = {
+    **per_item(PRODUCT_AXIS2, PRODUCT),
+    "ps_q29": "sim",
+    "ps_q30": ["energia"],
+    "ps_q31": "talvez",
+    "ps_q32": ["vender_residuos", "simbiose_industrial"],
+    "ps_q33": "nao",
+}
+AXIS3_ANSWERS = {
+    "esg_q35": "ativa_regularizada",
+    "esg_q36": "parcialmente",
+    "esg_q37": "sim_menos_1_ano",
+    "esg_q38": "verificacao_basica",
+    "esg_q39": "nenhum_registro",
+    "esg_q40": "nao_possui",
+}
+AXIS4_ANSWERS = {
+    **per_item(WASTE_AXIS4, WASTE),
+    "ve_q46": "apenas_custo_zero",
+}
+LEGACY_ALL_ANSWERS = {
+    **IDENTIFICATION_ANSWERS,
+    **LEGACY_AXIS1_ANSWERS,
+    **PRODUCT_AXIS2,
+    "ps_q29": "sim",
+    "ps_q30": ["energia"],
+    "ps_q31": "talvez",
+    "ps_q32": ["vender_residuos", "simbiose_industrial"],
+    "ps_q33": "nao",
+    **AXIS3_ANSWERS,
+    **WASTE_AXIS4,
+    "ve_q46": "apenas_custo_zero",
+}
+ALL_ANSWERS = {
+    **IDENTIFICATION_ANSWERS,
+    **AXIS1_ANSWERS,
+    **AXIS2_ANSWERS,
+    **AXIS3_ANSWERS,
+    **AXIS4_ANSWERS,
+}
+
+
+# ------------------------------------------------------------------- catálogo
+def test_catalog_has_all_axes_available() -> None:
+    steps = {s.id: s for s in CATALOG.steps}
+    assert [s.order for s in CATALOG.steps] == [1, 2, 3, 4, 5]
+    assert steps[STEP_SYMBIOSIS].availability is StepAvailability.AVAILABLE
+    assert all(step.availability is StepAvailability.AVAILABLE for step in CATALOG.steps)
+
+
+def test_axis_1_numbering_and_grouping() -> None:
+    axis1 = [q for q in CATALOG.questions if q.step_id == STEP_MATERIAL_FLOWS]
+    numbered = [q.code for q in axis1 if q.code is not None]
+    assert numbered == [f"1.{i}" for i in range(1, 17)]
+    identification = [q.code for q in CATALOG.questions if q.step_id == "identification"]
+    assert identification == [f"ID.{i}" for i in range(1, 9)]
+    sections = {q.id: q.section_id for q in axis1}
+    assert sections["q37"] == "fm_production"
+    assert {sections["q28"], sections["q29"], sections["q31"]} == {"fm_waste"}
+    assert sections["q43"] == "fm_data"
+    # Subitem condicional sem número próprio, logo após a pergunta de destino.
+    ids = [q.id for q in axis1]
+    assert ids.index("q19_other") == ids.index("q19") + 1
+    assert next(q for q in axis1 if q.id == "q19_other").code is None
+    # Seções do eixo existem e todas têm perguntas.
+    axis_sections = [s.id for s in CATALOG.sections if s.step_id == STEP_MATERIAL_FLOWS]
+    assert axis_sections == ["fm_production", "fm_waste", "fm_data"]
+
+
+def test_axis_2_questions_match_specification() -> None:
+    axis2 = CATALOG.questions_for_step(STEP_SYMBIOSIS)
+    assert [q.code for q in axis2] == [f"2.{i}" for i in range(1, 11)]
+    assert [q.number for q in axis2] == list(range(25, 35))
+    scored = {q.id: q for q in axis2 if q.scored}
+    assert set(scored) == {"ps_q25", "ps_q28"}
+    q25, q28 = scored["ps_q25"], scored["ps_q28"]
+    # Q25: aparece no Eixo 2, pontua no Pilar 3 (CL)
+    assert {o.label: o.points for o in q25.options} == {
+        "Coprocessamento/Reciclagem": 15,
+        "Aterro/Pátio": 5,
+    }
+    assert (q25.pillar_id, q25.pillar_weight, q25.ems_weight) == (PILLAR_CL, 15, 3.75)
+    assert {o.label: o.points for o in q28.options} == {"Alta": 60, "Média": 30, "Baixa": 0}
+    assert (q28.pillar_id, q28.pillar_weight, q28.ems_weight) == (PILLAR_PS, 60, 15)
+    q30 = next(q for q in axis2 if q.id == "ps_q30")
+    q32 = next(q for q in axis2 if q.id == "ps_q32")
+    assert [o.label for o in q30.options] == [
+        "Equipamentos", "Armazenamento", "Transporte", "Energia", "Serviços técnicos",
+    ]
+    assert [o.label for o in q32.options] == [
+        "Vender resíduos", "Comprar insumos", "Simbiose Industrial",
+        "Compartilhar infraestrutura", "Receber diagnóstico",
+    ]
+    assert next(q for q in axis2 if q.id == "ps_q34").required is False
+    pillars = {p.id: p for p in CATALOG.pillars}
+    assert pillars[PILLAR_PS].ems_weight == 25
+    assert pillars[PILLAR_CL].ems_weight == 25
+
+
+def test_axis_2_conditionals() -> None:
+    ids = lambda values: {q.id for q in visible_questions(CATALOG, values, ITEMS)}  # noqa: E731
+    key = lambda qid: response_key(qid, PRODUCT.id)  # noqa: E731
+    assert "ps_q27" not in ids({key("ps_q26"): "nao"})
+    assert "ps_q27" in ids({key("ps_q26"): "sim"})
+    assert "ps_q30" not in ids({"ps_q29": "nao"})
+    assert "ps_q30" in ids({"ps_q29": "sim"})
+
+
+def test_axis_3_questions_match_specification() -> None:
+    axis3 = CATALOG.questions_for_step(STEP_ESG)
+    assert [q.code for q in axis3] == [f"3.{i}" for i in range(1, 10)]
+    assert sorted(q.number for q in axis3) == list(range(35, 44))
+    expected = {
+        "esg_q35": ({"Ativa e Regularizada": 25, "Vencida ou Inexistente": 0}, PILLAR_CL, 25, 6.25),
+        "esg_q36": ({"Sim 100%": 25, "Parcialmente": 10, "Não emite": 0}, PILLAR_CL, 25, 6.25),
+        "esg_q37": (
+            {"Sim menos de 1 ano 100%": 15, "Parcialmente": 7, "Não possui": 0},
+            PILLAR_CL, 15, 3.75,
+        ),
+        "esg_q38": (
+            {"Homologação rigorosa": 10, "Verificação básica": 5, "Não rastreia": 0},
+            PILLAR_CL, 10, 2.5,
+        ),
+        "esg_q39": (
+            {"Nenhum registro": 10, "Notificações em aberto": 3, "Prefere não declarar": 0},
+            PILLAR_CL, 10, 2.5,
+        ),
+        "esg_q40": ({"Possui metas formais": 25, "Não possui": 5}, PILLAR_VE, 25, 5),
+    }
+    scored = {q.id: q for q in axis3 if q.scored}
+    assert set(scored) == set(expected)
+    for qid, (points, pillar, pillar_weight, ems_weight) in expected.items():
+        question = scored[qid]
+        assert {o.label: o.points for o in question.options} == points
+        assert (question.pillar_id, question.pillar_weight, question.ems_weight) == (
+            pillar, pillar_weight, ems_weight,
+        )
+    # Detalhamentos: logo após a pergunta que complementam, não pontuados e opcionais.
+    ids = [q.id for q in axis3]
+    for parent, detail in (("esg_q37", "esg_q41"), ("esg_q38", "esg_q42"), ("esg_q39", "esg_q43")):
+        assert ids.index(detail) == ids.index(parent) + 1
+        question = next(q for q in axis3 if q.id == detail)
+        assert not question.scored and not question.required
+    # Pilar CL completo (100%) = 25% do EMS; VE = 20%
+    cl = [q for q in CATALOG.questions if q.pillar_id == PILLAR_CL]
+    assert sum(q.pillar_weight or 0 for q in cl) == 100
+    assert sum(q.ems_weight or 0 for q in cl) == pytest.approx(25)
+    assert sum(p.ems_weight or 0 for p in CATALOG.pillars) == 100
+
+
+def test_expired_operating_license_raises_critical_alert() -> None:
+    evaluation = evaluate(
+        CATALOG, {**ALL_ANSWERS, "esg_q35": "vencida_inexistente"}, items=ITEMS
+    )
+    assert len(evaluation.alerts) == 1
+    alert = evaluation.alerts[0]
+    assert (alert.question_id, alert.level) == ("esg_q35", "critical")
+    assert "Licença de Operação" in alert.message
+
+
+def test_axis_4_questions_match_specification() -> None:
+    axis4 = CATALOG.questions_for_step(STEP_ECONOMIC)
+    assert [q.code for q in axis4] == [f"4.{i}" for i in range(1, 6)]
+    assert sorted(q.number for q in axis4) == list(range(44, 49))
+    expected = {
+        "ve_q44": ({"Alto": 35, "Médio": 20, "Baixo": 5}, 35, 7),
+        "ve_q45": (
+            {"Acima de R$ 50.000": 20, "Entre R$ 10.001 e R$ 50.000": 10, "Até R$ 10.000": 5},
+            20, 4,
+        ),
+        "ve_q46": (
+            {"Sim ROI menor que 12 meses": 20, "Apenas custo zero": 10, "Sem orçamento": 0},
+            20, 4,
+        ),
+    }
+    scored = {q.id: q for q in axis4 if q.scored}
+    assert set(scored) == set(expected)
+    for qid, (points, pillar_weight, ems_weight) in expected.items():
+        question = scored[qid]
+        assert {o.label: o.points for o in question.options} == points
+        assert (question.pillar_id, question.pillar_weight, question.ems_weight) == (
+            PILLAR_VE, pillar_weight, ems_weight,
+        )
+    ids = [q.id for q in axis4]
+    for parent, detail in (("ve_q45", "ve_q47"), ("ve_q46", "ve_q48")):
+        assert ids.index(detail) == ids.index(parent) + 1
+        question = next(q for q in axis4 if q.id == detail)
+        assert not question.scored and not question.required
+    # Todos os pilares completos: cada um soma 100% e os pesos fecham o EMS
+    for pillar in CATALOG.pillars:
+        questions = [q for q in CATALOG.questions if q.pillar_id == pillar.id]
+        assert sum(q.pillar_weight or 0 for q in questions) == 100, pillar.id
+        assert sum(q.ems_weight or 0 for q in questions) == pytest.approx(pillar.ems_weight)
+
+
+def test_q31_is_shown_in_axis_1_but_scored_in_symbiosis_pillar() -> None:
+    q31 = CATALOG.question("q31")
+    assert q31 is not None
+    assert q31.step_id == STEP_MATERIAL_FLOWS
+    assert q31.pillar_id == PILLAR_PS
+    assert (q31.pillar_weight, q31.ems_weight) == (40, 10)
+
+
+def test_scored_questions_match_specification() -> None:
+    expected = {
+        "q28": ({"excelente": 40, "parcial": 15, "nulo": 0}, PILLAR_FM, 40, 12),
+        "q29": ({"classe_iib": 40, "classe_iia": 25, "classe_i": 10}, PILLAR_FM, 40, 12),
+        "q31": ({"continuo": 40, "sazonal": 15}, PILLAR_PS, 40, 10),
+        "q37": ({"menos_2": 10, "entre_2_5": 5, "acima_5": 0}, PILLAR_FM, 10, 3),
+        "q43": ({"erp": 10, "planilhas": 5, "fisico": 0}, PILLAR_FM, 10, 3),
+    }
+    scored = {
+        q.id: q for q in CATALOG.questions if q.scored and q.step_id == STEP_MATERIAL_FLOWS
+    }
+    assert set(scored) == set(expected)
+    for qid, (points, pillar, pillar_weight, ems_weight) in expected.items():
+        question = scored[qid]
+        assert {o.value: o.points for o in question.options} == points
+        assert question.pillar_id == pillar
+        assert question.pillar_weight == pillar_weight
+        assert question.ems_weight == ems_weight
+
+
+def test_dmc_agent_has_diagnostics_permission() -> None:
+    assert role_has_permission(Role.DMC_AGENT, Permission.DIAGNOSTICS_MANAGE)
+    assert not role_has_permission(Role.VIEWER, Permission.DIAGNOSTICS_MANAGE)
+
+
+# ---------------------------------------------------------------- condicionais
+def test_conditional_questions() -> None:
+    ids = lambda values: {q.id for q in visible_questions(CATALOG, values, ITEMS)}  # noqa: E731
+    p = lambda qid: response_key(qid, PRODUCT.id)  # noqa: E731
+    w = lambda qid: response_key(qid, WASTE.id)  # noqa: E731
+    assert "q12" not in ids({p("q11"): "nao"})
+    assert "q12" in ids({p("q11"): "sim"})
+    assert "q18" not in ids({w("q17"): "nao"})
+    assert "q18" in ids({w("q17"): "sim"})
+    assert "q18" in ids({w("q17"): "as_vezes"})
+    assert "q19_other" not in ids({w("q19"): ["aterro"]})
+    assert "q19_other" in ids({w("q19"): ["aterro", "outro"]})
+
+
+def test_hidden_answers_do_not_count_or_block_completion() -> None:
+    values = {**ALL_ANSWERS, response_key("q12", PRODUCT.id): "resposta antiga"}
+    evaluation = evaluate(CATALOG, values, items=ITEMS)
+    assert evaluation.complete is True
+    assert evaluation.progress == 100
+    axis1 = next(s for s in evaluation.steps if s.step_id == STEP_MATERIAL_FLOWS)
+    assert axis1.not_applicable == 3  # q12, q18, q19_other
+    assert response_key("q12", PRODUCT.id) not in evaluation.visible_question_ids
+
+
+def test_showing_conditional_question_makes_it_required() -> None:
+    values = {**ALL_ANSWERS, response_key("q17", WASTE.id): "sim"}
+    evaluation = evaluate(CATALOG, values, items=ITEMS)
+    axis1 = next(s for s in evaluation.steps if s.step_id == STEP_MATERIAL_FLOWS)
+    assert axis1.missing_required == [response_key("q18", WASTE.id)]
+    assert axis1.status is StepStatus.IN_PROGRESS
+    assert evaluation.complete is False
+
+
+# ------------------------------------------------------------------ pontuação
+def test_scoring_by_pillar_and_ems() -> None:
+    evaluation = evaluate(CATALOG, ALL_ANSWERS, items=ITEMS)
+    pillars = {p.pillar_id: p for p in evaluation.pillars}
+    # FM: 40 (excelente) + 25 (IIA) + 5 (2–5%) + 5 (planilhas)
+    assert (pillars[PILLAR_FM].points, pillars[PILLAR_FM].max_points) == (75, 100)
+    # PS: Q31 (Eixo 1) sazonal 15 + Q28 (Eixo 2) média 30 — pilar completo (40% + 60%)
+    assert (pillars[PILLAR_PS].points, pillars[PILLAR_PS].max_points) == (45, 100)
+    # CL: 2.1 (15) + LO 25 + MTR parcial 10 + laudos 15 + verificação 5 + sem registro 10
+    assert (pillars[PILLAR_CL].points, pillars[PILLAR_CL].max_points) == (80, 100)
+    # VE: metas não possui 5 + custo alto 35 + R$10–50 mil 10 + apenas custo zero 10
+    assert (pillars[PILLAR_VE].points, pillars[PILLAR_VE].max_points) == (60, 100)
+    # EMS: Eixo 1 26.25 + Eixo 2 (3.75 + 7.5) + Eixo 3 (6.25 + 2.5 + 3.75 + 1.25 + 2.5 + 1)
+    # + Eixo 4 (7 + 4*10/20 + 4*10/20)
+    assert evaluation.ems.points == pytest.approx(37.5 + 17.25 + 7 + 2 + 2)
+    # Todos os eixos disponíveis: EMS completo
+    assert evaluation.ems.max_available == pytest.approx(100)
+    assert evaluation.alerts == []
+
+
+def test_progress_counts_required_questions_of_all_axes() -> None:
+    evaluation = evaluate(CATALOG, {})
+    statuses = {s.step_id: s.status for s in evaluation.steps}
+    assert statuses["axis_2_symbiosis"] is StepStatus.NOT_STARTED
+    assert statuses["axis_3_esg"] is StepStatus.NOT_STARTED
+    assert statuses["axis_4_economic"] is StepStatus.NOT_STARTED
+    # Sem itens cadastrados: Eixo 1 = cadastros 1.1 e 1.7 + 1.16; Eixo 2 = 4 gerais
+    # (2.6 condicional, 2.10 opcional); Eixo 3 = 6; Eixo 4 = 4.4.
+    assert evaluation.required_total == 8 + 3 + 4 + 6 + 1
+    axis1 = next(s for s in evaluation.steps if s.step_id == STEP_MATERIAL_FLOWS)
+    assert axis1.missing_required == ["q09", "q14", "q43"]
+    # Com 1 produto e 1 resíduo: mesmas 38 obrigatórias do formulário anterior.
+    with_items = evaluate(CATALOG, {}, items=ITEMS)
+    assert with_items.required_total == 8 + 14 + 7 + 6 + 3
+
+
+# ------------------------------------------------------------------- validação
+def test_normalize_answer_rejects_invalid_values() -> None:
+    q04 = CATALOG.question("q04")
+    q19 = CATALOG.question("q19")
+    q07 = CATALOG.question("q07")
+    assert q04 is not None and q19 is not None and q07 is not None
+    with pytest.raises(InvalidAnswerError):
+        normalize_answer(q04, "mil")
+    with pytest.raises(InvalidAnswerError):
+        normalize_answer(q19, ["lixao"])
+    with pytest.raises(InvalidAnswerError):
+        normalize_answer(q07, "nao-e-email")
+    assert normalize_answer(q19, ["venda", "venda", "outro"]) == ["venda", "outro"]
+    assert normalize_answer(q04, "  ") is None
+
+
+# --------------------------------------------------------------------- serviço
+def _company(**overrides: object) -> CompanyDocument:
+    data: dict[str, object] = {
+        "owner_user_id": uuid4(),
+        "legal_name": "Recicla Sul Ltda",
+        "trade_name": "Recicla Sul",
+        "tax_id": "11222333000181",
+        "email": "contato@reciclasul.com.br",
+        "phone": "51999990000",
+        "legal_representative": "Maria",
+        "sector": "Plásticos",
+        "address": CompanyAddress(city="Porto Alegre", state="RS"),
+    }
+    data.update(overrides)
+    return CompanyDocument(**data)  # type: ignore[arg-type]
+
+
+def _service(company: CompanyDocument, *, agent: UserDocument | None = None):
+    agent = agent or UserDocument(
+        firebase_uid="agent-uid", email="agente@econmesh.com", name="Ana", role=Role.DMC_AGENT
+    )
+    auth = AsyncMock()
+    auth.get_by_firebase_uid = AsyncMock(return_value=agent)
+    auth.get_by_id = AsyncMock(return_value=None)
+    users = AsyncMock()
+    users.get_by_user = AsyncMock(return_value=None)
+    scope_service = AsyncMock()
+    scope_service.for_agent = AsyncMock(
+        return_value=PortfolioScope(
+            agent_user_id=agent.id,
+            links=[
+                DmcPortfolioLinkDocument(
+                    agent_user_id=agent.id,
+                    company_id=company.id,
+                    source=PortfolioSource.ASSIGNED,
+                )
+            ],
+            companies={company.id: company},
+        )
+    )
+    repo = AsyncMock()
+
+    async def _migrate(diagnostic_id, items, responses):
+        current = await repo.get(diagnostic_id)
+        current.items = items
+        current.responses = responses
+        return current
+
+    repo.replace_items_and_responses = AsyncMock(side_effect=_migrate)
+    repo.get_open_for_company = AsyncMock(return_value=None)
+    repo.create = AsyncMock(side_effect=lambda doc: doc)
+    audit = AsyncMock()
+    service = MaturityDiagnosticsService(
+        repository=repo, auth=auth, users=users, scope=scope_service, audit=audit
+    )
+    return service, repo, agent
+
+
+async def test_create_prefills_identification_from_registry() -> None:
+    company = _company()
+    service, repo, agent = _service(company)
+
+    detail, created = await service.create("agent-uid", company.id)
+
+    assert created is True
+    doc: MaturityDiagnosticDocument = repo.create.await_args.args[0]
+    assert doc.agent_user_id == agent.id
+    assert doc.company_id == company.id
+    assert doc.status == DiagnosticStatus.NOT_STARTED
+    assert doc.responses["q01"].value == "Recicla Sul Ltda"
+    assert doc.responses["q02"].value == "11222333000181"
+    assert doc.responses["q03"].value == "Plásticos"
+    assert doc.responses["q05"].value == "Maria"
+    assert doc.responses["q01"].source == ResponseSource.REGISTRY
+    assert "q04" not in doc.responses  # não existe no cadastro
+    assert detail.current_step == "identification"
+
+
+async def test_create_rejects_company_outside_portfolio() -> None:
+    service, repo, _ = _service(_company())
+    with pytest.raises(ForbiddenError):
+        await service.create("agent-uid", uuid4())
+    repo.create.assert_not_awaited()
+
+
+async def test_create_resumes_open_diagnostic_of_same_agent() -> None:
+    company = _company()
+    service, repo, agent = _service(company)
+    existing = MaturityDiagnosticDocument(
+        company_id=company.id,
+        agent_user_id=agent.id,
+        catalog_version=CATALOG.version,
+        company_snapshot={"legal_name": company.legal_name, "tax_id": company.tax_id},
+    )
+    repo.get_open_for_company = AsyncMock(return_value=existing)
+
+    detail, created = await service.create("agent-uid", company.id)
+    assert created is False
+    assert detail.id == existing.id
+
+    existing.agent_user_id = uuid4()
+    with pytest.raises(ConflictError) as exc:
+        await service.create("agent-uid", company.id)
+    assert exc.value.code == "diagnostic_open_by_other_agent"
+
+
+def _open_diagnostic(
+    company: CompanyDocument,
+    agent: UserDocument,
+    *,
+    items: list[DiagnosticItem] | None = None,
+    **values: object,
+):
+    return MaturityDiagnosticDocument(
+        company_id=company.id,
+        agent_user_id=agent.id,
+        catalog_version=CATALOG.version,
+        company_snapshot={"legal_name": company.legal_name, "tax_id": company.tax_id},
+        items=[item.model_copy() for item in (items or [])],
+        responses={
+            qid: DiagnosticResponse(value=value)  # type: ignore[arg-type]
+            for qid, value in values.items()
+        },
+    )
+
+
+async def test_save_responses_validates_and_scores() -> None:
+    company = _company()
+    service, repo, agent = _service(company)
+    diagnostic = _open_diagnostic(company, agent, items=ITEMS)
+    repo.get = AsyncMock(return_value=diagnostic)
+
+    async def _save(diagnostic_id, responses, *, current_step=None):
+        diagnostic.responses.update(responses)
+        return diagnostic
+
+    repo.save_responses = AsyncMock(side_effect=_save)
+    repo.update = AsyncMock(return_value=diagnostic)
+
+    await service.save_responses(
+        "agent-uid",
+        diagnostic.id,
+        SaveResponsesRequest(
+            answers=[
+                AnswerInput(question_id=f"q28@{WASTE.id}", value="parcial"),
+                AnswerInput(question_id=f"q19@{WASTE.id}", value=["outro"]),
+                AnswerInput(question_id="q43", value="erp"),
+            ],
+            current_step=STEP_MATERIAL_FLOWS,
+        ),
+    )
+    saved = repo.save_responses.await_args.args[1]
+    assert saved[f"q28@{WASTE.id}"].score == 15
+    assert saved[f"q19@{WASTE.id}"].value == ["outro"]
+    assert saved["q43"].score == 10
+    patch = repo.update.await_args.args[1]
+    assert patch["status"] == DiagnosticStatus.IN_PROGRESS.value
+
+    with pytest.raises(ValidationAppError) as exc:
+        await service.save_responses(
+            "agent-uid",
+            diagnostic.id,
+            SaveResponsesRequest(
+                answers=[
+                    AnswerInput(question_id=f"q28@{WASTE.id}", value="otimo"),
+                    AnswerInput(question_id="q01", value="Outro nome"),
+                    AnswerInput(question_id="q99", value="x"),
+                    # pergunta por resíduo sem item / com item de outro tipo / item inexistente
+                    AnswerInput(question_id="q29", value="classe_i"),
+                    AnswerInput(question_id=f"q29@{PRODUCT.id}", value="classe_i"),
+                    AnswerInput(question_id="q29@naoexiste", value="classe_i"),
+                    # pergunta geral com item / cadastro não é resposta
+                    AnswerInput(question_id=f"q43@{WASTE.id}", value="erp"),
+                    AnswerInput(question_id="q09", value="Produto X"),
+                ]
+            ),
+        )
+    assert set(exc.value.details["errors"]) == {
+        f"q28@{WASTE.id}", "q01", "q99", "q29", f"q29@{PRODUCT.id}", "q29@naoexiste",
+        f"q43@{WASTE.id}", "q09",
+    }
+
+
+async def test_other_agent_cannot_access_diagnostic() -> None:
+    company = _company()
+    service, repo, _ = _service(company)
+    diagnostic = _open_diagnostic(company, UserDocument(firebase_uid="x", email="x@x.com"))
+    repo.get = AsyncMock(return_value=diagnostic)
+    with pytest.raises(ForbiddenError):
+        await service.get("agent-uid", diagnostic.id)
+
+
+async def test_complete_requires_all_available_steps() -> None:
+    company = _company()
+    service, repo, agent = _service(company)
+    incomplete = _open_diagnostic(company, agent, **IDENTIFICATION_ANSWERS)
+    repo.get = AsyncMock(return_value=incomplete)
+    with pytest.raises(ValidationAppError) as exc:
+        await service.complete("agent-uid", incomplete.id)
+    assert exc.value.code == "diagnostic_incomplete"
+
+    complete = _open_diagnostic(company, agent, items=ITEMS, **ALL_ANSWERS)
+    repo.get = AsyncMock(return_value=complete)
+    repo.update = AsyncMock(
+        side_effect=lambda _id, patch: complete.model_copy(
+            update={"status": DiagnosticStatus.COMPLETED, "is_open": False}
+        )
+    )
+    detail = await service.complete("agent-uid", complete.id)
+    patch = repo.update.await_args.args[1]
+    assert patch["status"] == DiagnosticStatus.COMPLETED.value
+    assert patch["is_open"] is False
+    assert patch["result"]["ems"]["points"] == pytest.approx(65.75)
+    assert detail.can_edit is False
+
+
+async def test_validate_step_reports_missing_required() -> None:
+    company = _company()
+    service, repo, agent = _service(company)
+    diagnostic = _open_diagnostic(company, agent, q01="Recicla Sul Ltda")
+    repo.get = AsyncMock(return_value=diagnostic)
+    with pytest.raises(ValidationAppError) as exc:
+        await service.validate_step("agent-uid", diagnostic.id, "identification")
+    assert exc.value.code == "step_incomplete"
+    assert "q04" in exc.value.details["missing"]
+
+    with pytest.raises(ValidationAppError):
+        await service.validate_step("agent-uid", diagnostic.id, "eixo_inexistente")
+
+
+async def test_routes_require_dmc_agent(app: FastAPI, client: AsyncClient) -> None:
+    from src.shared.dependencies.auth import CurrentUser, get_current_user
+
+    async def _admin() -> CurrentUser:
+        return CurrentUser(uid="admin", role=Role.ADMIN)
+
+    app.dependency_overrides[get_current_user] = _admin
+    try:
+        response = await client.get(
+            "/api/v1/dmc/diagnostics/catalog", headers={"Authorization": "Bearer x"}
+        )
+        assert response.status_code == 403
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_catalog_route_for_agent(app: FastAPI, client: AsyncClient) -> None:
+    from src.shared.dependencies.auth import CurrentUser, get_current_user
+
+    async def _agent() -> CurrentUser:
+        return CurrentUser(uid="agent", role=Role.DMC_AGENT)
+
+    app.dependency_overrides[get_current_user] = _agent
+    try:
+        response = await client.get(
+            "/api/v1/dmc/diagnostics/catalog", headers={"Authorization": "Bearer x"}
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["steps"]) == 5
+        assert any(q["id"] == "ps_q25" and q["pillar_id"] == "cl" for q in body["questions"])
+        assert any(q["id"] == "q31" and q["pillar_id"] == "ps" for q in body["questions"])
+    finally:
+        app.dependency_overrides.clear()
+
+
+def _completed_before_axes_2_to_4(company, agent):
+    """Diagnóstico concluído quando só Identificação e Eixo 1 existiam."""
+    old_result = evaluate(
+        CATALOG,
+        {**IDENTIFICATION_ANSWERS, **AXIS1_ANSWERS},
+        items=ITEMS,
+        available_step_ids={"identification", STEP_MATERIAL_FLOWS},
+    ).model_dump(mode="python")
+    # Respostas no formato antigo (sem itens): convertidas em memória ao consultar.
+    done = _open_diagnostic(company, agent, **IDENTIFICATION_ANSWERS, **LEGACY_AXIS1_ANSWERS)
+    return done.model_copy(
+        update={
+            "status": DiagnosticStatus.COMPLETED,
+            "is_open": False,
+            "result": old_result,
+            "completed_at": datetime(2026, 10, 3, 17, 30, tzinfo=UTC),
+        }
+    )
+
+
+async def test_completed_diagnostic_keeps_snapshot_after_catalog_changes() -> None:
+    """Eixos ativados depois aparecem em manutenção no relatório e na consulta."""
+    company = _company()
+    service, repo, agent = _service(company)
+    done = _completed_before_axes_2_to_4(company, agent)
+    repo.get = AsyncMock(return_value=done)
+    repo.update = AsyncMock(return_value=done)
+
+    report, created = await service.generate_report("agent-uid", done.id)
+    assert created is True
+    assert report.summary.overall_score == pytest.approx(26.25)
+    assert report.summary.overall_max == pytest.approx(40)
+    assert report.summary.partial is True
+    statuses = {axis.step_id: axis.status for axis in report.axes}
+    assert statuses[STEP_MATERIAL_FLOWS] == "evaluated"
+    assert statuses[STEP_SYMBIOSIS] == "maintenance"
+    assert statuses[STEP_ESG] == statuses[STEP_ECONOMIC] == "maintenance"
+    assert report.scope.complete is False
+    assert len(report.scope.pending_axes) == 3
+    # Persistido no diagnóstico
+    patch = repo.update.await_args.args[1]
+    assert patch["report"]["summary"]["overall_score"] == pytest.approx(26.25)
+    assert "report_generated_at" in patch
+    detail = await service.get("agent-uid", done.id)
+    assert detail.evaluation.ems.max_available == 40
+
+
+async def test_report_is_reused_and_requires_generation() -> None:
+    company = _company()
+    service, repo, agent = _service(company)
+    done = _completed_before_axes_2_to_4(company, agent)
+    repo.get = AsyncMock(return_value=done)
+    with pytest.raises(NotFoundError) as exc:
+        await service.get_report("agent-uid", done.id)
+    assert exc.value.code == "report_not_generated"
+
+    built = DiagnosticReportService(CATALOG).build(done, agent)
+    stored = done.model_copy(update={"report": built.model_dump(mode="python")})
+    repo.get = AsyncMock(return_value=stored)
+    repo.update = AsyncMock(return_value=stored)
+    report, created = await service.generate_report("agent-uid", done.id)
+    assert created is False
+    assert report.generated_at == built.generated_at
+    assert (await service.get_report("agent-uid", done.id)).diagnostic_id == done.id
+
+
+async def test_report_requires_completed_diagnostic() -> None:
+    company = _company()
+    service, repo, agent = _service(company)
+    repo.get = AsyncMock(
+        return_value=_open_diagnostic(company, agent, items=ITEMS, **ALL_ANSWERS)
+    )
+    with pytest.raises(ConflictError) as exc:
+        await service.generate_report("agent-uid", uuid4())
+    assert exc.value.code == "diagnostic_not_completed"
+
+
+# ------------------------------------------------------------------- relatório
+def _full_report():
+    company = _company()
+    agent = UserDocument(firebase_uid="a", email="ana@econmesh.com", name="Ana Lima")
+    responses = {
+        qid: DiagnosticResponse(value=value)  # type: ignore[arg-type]
+        for qid, value in ALL_ANSWERS.items()
+    }
+    responses["q01"] = DiagnosticResponse(
+        value="Recicla Sul Ltda", source=ResponseSource.REGISTRY, registry_value="Recicla Sul Ltda"
+    )
+    responses["q05"] = DiagnosticResponse(value="Maria", registry_value="Maria S.")
+    result = evaluate(CATALOG, ALL_ANSWERS, items=ITEMS).model_dump(mode="python")
+    diagnostic = MaturityDiagnosticDocument(
+        company_id=company.id,
+        agent_user_id=agent.id,
+        catalog_version=CATALOG.version,
+        status=DiagnosticStatus.COMPLETED,
+        is_open=False,
+        result=result,
+        items=ITEMS,
+        responses=responses,
+        completed_at=datetime(2026, 10, 3, 17, 30, tzinfo=UTC),
+        company_snapshot={"legal_name": company.legal_name, "tax_id": company.tax_id},
+    )
+    return DiagnosticReportService(CATALOG).build(diagnostic, agent)
+
+
+def test_engine_reports_axis_and_pillar_contributions() -> None:
+    evaluation = evaluate(CATALOG, ALL_ANSWERS, items=ITEMS)
+    axes = {a.step_id: a for a in evaluation.axes}
+    assert [a.step_id for a in evaluation.axes] == [
+        STEP_MATERIAL_FLOWS, STEP_SYMBIOSIS, STEP_ESG, STEP_ECONOMIC,
+    ]
+    # Eixo 1: q28 12 + q29 7.5 + q31 3.75 + q37 1.5 + q43 1.5 de 40
+    assert axes[STEP_MATERIAL_FLOWS].ems_points == pytest.approx(26.25)
+    assert axes[STEP_MATERIAL_FLOWS].ems_max == pytest.approx(40)
+    assert axes[STEP_MATERIAL_FLOWS].percent == pytest.approx(65.6)
+    assert sum(a.ems_points for a in evaluation.axes) == pytest.approx(evaluation.ems.points)
+    pillars = {p.pillar_id: p for p in evaluation.pillars}
+    assert pillars[PILLAR_FM].ems_points == pytest.approx(22.5)
+    assert pillars[PILLAR_FM].ems_max == pytest.approx(30)
+    assert sum(p.ems_points for p in evaluation.pillars) == pytest.approx(evaluation.ems.points)
+
+
+def test_report_derives_findings_from_answers() -> None:
+    report = _full_report()
+    assert report.summary.overall_score == pytest.approx(65.75)
+    assert report.summary.partial is False
+    # Sem régua oficial: nenhum nível aplicado
+    assert report.summary.maturity_level is None
+    assert report.summary.maturity_scale_defined is False
+    assert all(axis.status == "evaluated" for axis in report.axes)
+    indicators = {i.question_id: i for i in report.indicators}
+    assert indicators["q28"].tier == "high"  # excelente 40/40
+    assert indicators["q37"].tier == "medium"  # entre 2–5% → 5/10
+    assert indicators["q31"].tier == "low"  # sazonal 15/40
+    strengths = {f.title for f in report.strengths}
+    attention = {f.title for f in report.attention_points}
+    assert "Segregação na fonte" in strengths
+    assert "Perda de matéria-prima" in attention
+    assert "Regularidade de fornecimento" in attention
+    # Custo de descarte alto é destaque (incentivo); custo baixo não vira "atenção".
+    assert "Custo de descarte e logística" in strengths
+    opportunities = [o.title for o in report.opportunities]
+    assert "Redução de perdas de matéria-prima" in opportunities
+    assert [o.number for o in report.opportunities] == list(range(1, len(opportunities) + 1))
+    # Contexto: capacidade ociosa vira oportunidade com as áreas informadas
+    sharing = next(o for o in report.opportunities if "capacidade ociosa" in o.title.lower())
+    assert "Energia" in sharing.text
+    origins = {f.question_id: f.origin for f in report.identification}
+    assert origins["q01"] == "registry"
+    assert origins["q05"] == "adjusted"
+    assert origins["q04"] == "diagnostic"
+    assert report.versions.methodology_version
+    assert len(report.methodology.axes) == 4
+    assert any("não foi aplicada" in c for c in report.conclusions)
+
+
+def test_report_flags_critical_license_alert() -> None:
+    company = _company()
+    agent = UserDocument(firebase_uid="a", email="ana@econmesh.com")
+    values = {**ALL_ANSWERS, "esg_q35": "vencida_inexistente"}
+    diagnostic = MaturityDiagnosticDocument(
+        company_id=company.id,
+        agent_user_id=agent.id,
+        catalog_version=CATALOG.version,
+        status=DiagnosticStatus.COMPLETED,
+        is_open=False,
+        result=evaluate(CATALOG, values, items=ITEMS).model_dump(mode="python"),
+        items=ITEMS,
+        responses={k: DiagnosticResponse(value=v) for k, v in values.items()},  # type: ignore[arg-type]
+        company_snapshot={"legal_name": company.legal_name, "tax_id": company.tax_id},
+    )
+    report = DiagnosticReportService(CATALOG).build(diagnostic, agent)
+    first = report.attention_points[0]
+    assert first.severity == "critical"
+    assert first.title == "Licença de Operação"
+    assert report.opportunities[0].title == "Regularização da Licença de Operação"
+
+
+def test_report_pdf_is_rendered_with_cover_and_pagination() -> None:
+    import fitz
+
+    report = _full_report()
+    pdf = render_report_pdf(report)
+    assert pdf.startswith(b"%PDF")
+    doc = fitz.open(stream=pdf, filetype="pdf")
+    assert doc.page_count >= 8
+    cover = doc[0].get_text()
+    assert "MATURIDADE CIRCULAR" in cover
+    assert report.company.legal_name in cover
+    last = doc[-1].get_text()
+    assert f"Página {doc.page_count} de {doc.page_count}" in last
+    import unicodedata
+
+    # NFKC desfaz ligaduras tipográficas (ex.: "ﬁ") na extração de texto.
+    full_text = unicodedata.normalize("NFKC", "".join(page.get_text() for page in doc))
+    for heading in (
+        "Identificação da Empresa",
+        "Resumo Executivo",
+        "Pontos de Destaque",
+        "Oportunidades de Melhoria",
+        "Metodologia",
+        "Resumo das Respostas",
+    ):
+        assert heading in full_text
+    assert doc[0].get_images()  # logo na capa
+    assert report_filename(report).endswith(".pdf")

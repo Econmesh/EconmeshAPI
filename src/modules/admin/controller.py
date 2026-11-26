@@ -37,11 +37,23 @@ class AdminController:
     async def get_user(self, user_id: UUID) -> AdminUserListItem:
         return await self._service.get_user(user_id)
 
-    async def create_user(self, payload: AdminRegisterRequest) -> RegisterResponse:
-        return await self._service.create_user(payload)
+    async def create_user(
+        self, payload: AdminRegisterRequest, *, actor_firebase_uid: str | None = None
+    ) -> RegisterResponse:
+        return await self._service.create_user(
+            payload, actor_firebase_uid=actor_firebase_uid
+        )
 
-    async def update_user(self, user_id: UUID, payload: AdminUserUpdate) -> MeResponse:
-        return await self._service.update_user(user_id, payload)
+    async def update_user(
+        self,
+        user_id: UUID,
+        payload: AdminUserUpdate,
+        *,
+        actor_firebase_uid: str | None = None,
+    ) -> MeResponse:
+        return await self._service.update_user(
+            user_id, payload, actor_firebase_uid=actor_firebase_uid
+        )
 
     async def get_user_profile(self, user_id: UUID) -> UserProfileResponse:
         return await self._service.get_user_profile(user_id)

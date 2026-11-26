@@ -93,6 +93,8 @@ class SupportTicketResponse(APIModel):
     status: SupportTicketStatus
     assigned_admin_id: UUID | None = None
     assigned_admin_name: str | None = None
+    assigned_agent_id: UUID | None = None
+    assigned_agent_name: str | None = None
     closed_by: UUID | None = None
     closed_at: datetime | None = None
     last_message_at: datetime | None = None
@@ -120,6 +122,7 @@ class AdminSupportTicketListParams(APIModel):
     page_size: int = 20
     status: SupportTicketStatus | None = None
     source: SupportTicketSource | None = None
+    interest: SupportContactInterest | None = None
     q: str | None = None
 
     @classmethod
@@ -129,9 +132,17 @@ class AdminSupportTicketListParams(APIModel):
         page_size: int = Query(default=20, ge=1, le=100),
         status: SupportTicketStatus | None = Query(default=None),
         source: SupportTicketSource | None = Query(default=None),
+        interest: SupportContactInterest | None = Query(default=None),
         q: str | None = Query(default=None, max_length=200),
     ) -> AdminSupportTicketListParams:
-        return cls(page=page, page_size=page_size, status=status, source=source, q=q)
+        return cls(
+            page=page,
+            page_size=page_size,
+            status=status,
+            source=source,
+            interest=interest,
+            q=q,
+        )
 
 
 class UserSupportTicketListParams(APIModel):

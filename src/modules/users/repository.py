@@ -118,5 +118,14 @@ class UsersRepository:
         result = await self._collection.delete_one({"user_id": user_id})
         return result.deleted_count > 0
 
+    async def list_by_company_ids(
+        self, company_ids: list[UUID]
+    ) -> list[UserProfileDocument]:
+        if not company_ids:
+            return []
+        cursor = self._collection.find({"company_id": {"$in": company_ids}})
+        docs = await cursor.to_list(length=None)
+        return [UserProfileDocument.model_validate(doc) for doc in docs]
+
 
 __all__ = ["UsersRepository"]

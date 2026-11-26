@@ -7,8 +7,16 @@ from uuid import UUID
 
 from pymongo import ASCENDING, ReturnDocument
 
-from src.modules.companies.model import CompanyDocument
+from src.modules.companies.model import CompanyDocument, CompanyRegistrationStatus
 from src.shared.utils.time import utcnow
+
+_COMPLETE_ACTIVE: dict = {
+    "is_active": True,
+    "$or": [
+        {"registration_status": CompanyRegistrationStatus.COMPLETE.value},
+        {"registration_status": {"$exists": False}},
+    ],
+}
 
 if TYPE_CHECKING:
     from pymongo.asynchronous.collection import AsyncCollection
@@ -36,10 +44,20 @@ class CompaniesRepository:
             [("is_active", ASCENDING)], name="ix_is_active"
         )
         await self._collection.create_index(
+            [("registration_status", ASCENDING), ("is_active", ASCENDING)],
+            name="ix_registration_status_active",
+        )
+        indexes = await self._collection.index_information()
+        if "uniq_active_owner_user_id" in indexes:
+            await self._collection.drop_index("uniq_active_owner_user_id")
+        await self._collection.create_index(
             [("owner_user_id", ASCENDING)],
             unique=True,
             name="uniq_active_owner_user_id",
-            partialFilterExpression={"is_active": True},
+            partialFilterExpression={
+                "is_active": True,
+                "owner_user_id": {"$exists": True, "$type": "binData"},
+            },
         )
 
     async def list_for_owner(
@@ -59,9 +77,12 @@ class CompaniesRepository:
             {"owner_user_id": owner_user_id, "is_active": True}
         )
 
-    async def list_all(self, *, skip: int, limit: int) -> list[CompanyDocument]:
+    async def list_all(
+        self, *, skip: int, limit: int, include_pre_registered: bool = True
+    ) -> list[CompanyDocument]:
+        query: dict = {"is_active": True} if include_pre_registered else dict(_COMPLETE_ACTIVE)
         cursor = (
-            self._collection.find({"is_active": True})
+            self._collection.find(query)
             .sort("created_at", ASCENDING)
             .skip(skip)
             .limit(limit)
@@ -69,8 +90,9 @@ class CompaniesRepository:
         docs = await cursor.to_list(length=limit)
         return [CompanyDocument.model_validate(doc) for doc in docs]
 
-    async def count_all(self) -> int:
-        return await self._collection.count_documents({"is_active": True})
+    async def count_all(self, *, include_pre_registered: bool = True) -> int:
+        query: dict = {"is_active": True} if include_pre_registered else dict(_COMPLETE_ACTIVE)
+        return await self._collection.count_documents(query)
 
     async def get(self, company_id: UUID) -> CompanyDocument | None:
         doc = await self._collection.find_one({"_id": company_id})
@@ -80,20 +102,99 @@ class CompaniesRepository:
         doc = await self._collection.find_one({"country": country, "tax_id": tax_id})
         return CompanyDocument.model_validate(doc) if doc else None
 
-    async def search(self, q: str, *, limit: int = 20) -> list[CompanyDocument]:
+    def _text_search_query(
+        self, q: str, *, status: CompanyRegistrationStatus | None = None
+    ) -> dict:
         import re
 
         escaped = re.escape(q.strip()) if q.strip() else ""
-        query: dict = {"is_active": True}
+        filters: list[dict] = [{"is_active": True}]
+        if status is CompanyRegistrationStatus.PRE_REGISTERED:
+            filters.append(
+                {"registration_status": CompanyRegistrationStatus.PRE_REGISTERED.value}
+            )
+        elif status is CompanyRegistrationStatus.COMPLETE:
+            filters.append(
+                {
+                    "$or": [
+                        {
+                            "registration_status": CompanyRegistrationStatus.COMPLETE.value
+                        },
+                        {"registration_status": {"$exists": False}},
+                    ]
+                }
+            )
         if escaped:
-            query["$or"] = [
+            digits = "".join(ch for ch in q if ch.isdigit())
+            clauses: list[dict] = [
                 {"legal_name": {"$regex": escaped, "$options": "i"}},
                 {"trade_name": {"$regex": escaped, "$options": "i"}},
                 {"tax_id": {"$regex": escaped, "$options": "i"}},
             ]
+            if digits:
+                clauses.append({"tax_id": {"$regex": re.escape(digits)}})
+            filters.append({"$or": clauses})
+        if len(filters) == 1:
+            return filters[0]
+        return {"$and": filters}
+
+    async def search(
+        self,
+        q: str,
+        *,
+        limit: int = 20,
+        include_pre_registered: bool = False,
+    ) -> list[CompanyDocument]:
+        status = None if include_pre_registered else CompanyRegistrationStatus.COMPLETE
+        query = self._text_search_query(q, status=status)
         cursor = self._collection.find(query).sort("legal_name", ASCENDING).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [CompanyDocument.model_validate(doc) for doc in docs]
+
+    async def search_pre_registrations(self, q: str, *, limit: int = 8) -> list[CompanyDocument]:
+        query = self._text_search_query(q, status=CompanyRegistrationStatus.PRE_REGISTERED)
+        cursor = self._collection.find(query).sort("legal_name", ASCENDING).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [CompanyDocument.model_validate(doc) for doc in docs]
+
+    async def get_pre_registration(self, company_id: UUID) -> CompanyDocument | None:
+        doc = await self._collection.find_one(
+            {
+                "_id": company_id,
+                "is_active": True,
+                "registration_status": CompanyRegistrationStatus.PRE_REGISTERED.value,
+            }
+        )
+        return CompanyDocument.model_validate(doc) if doc else None
+
+    async def claim_pre_registration(
+        self, company_id: UUID, patch: dict[str, object]
+    ) -> CompanyDocument | None:
+        """Atomically turn a pre-registration into a complete, owned company.
+
+        Returns ``None`` when the document is no longer a pre-registration
+        (e.g. another user claimed it first).
+        """
+        patch = {
+            **patch,
+            "registration_status": CompanyRegistrationStatus.COMPLETE.value,
+            "updated_at": utcnow(),
+        }
+        doc = await self._collection.find_one_and_update(
+            {
+                "_id": company_id,
+                "is_active": True,
+                "registration_status": CompanyRegistrationStatus.PRE_REGISTERED.value,
+                "owner_user_id": None,
+            },
+            {"$set": patch},
+            return_document=ReturnDocument.AFTER,
+        )
+        return CompanyDocument.model_validate(doc) if doc else None
+
+    async def restore(self, original: CompanyDocument) -> None:
+        """Put a document back exactly as it was (rollback of a failed claim)."""
+        await self._collection.replace_one({"_id": original.id}, original.to_mongo())
 
     async def create(self, doc: CompanyDocument) -> CompanyDocument:
         await self._collection.insert_one(doc.to_mongo())
@@ -124,7 +225,7 @@ class CompaniesRepository:
     async def list_active_except(
         self, exclude_ids: set[UUID], *, skip: int, limit: int
     ) -> list[CompanyDocument]:
-        query: dict = {"is_active": True}
+        query: dict = dict(_COMPLETE_ACTIVE)
         if exclude_ids:
             query["_id"] = {"$nin": list(exclude_ids)}
         cursor = (
@@ -137,7 +238,7 @@ class CompaniesRepository:
         return [CompanyDocument.model_validate(doc) for doc in docs]
 
     async def count_active_except(self, exclude_ids: set[UUID]) -> int:
-        query: dict = {"is_active": True}
+        query: dict = dict(_COMPLETE_ACTIVE)
         if exclude_ids:
             query["_id"] = {"$nin": list(exclude_ids)}
         return await self._collection.count_documents(query)

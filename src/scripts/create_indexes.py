@@ -17,6 +17,15 @@ from src.modules.billing.repository import BillingRepository
 from src.modules.blog.repository import BlogPostsRepository
 from src.modules.coming_soon.repository import ComingSoonRepository
 from src.modules.companies.repository import CompaniesRepository
+from src.modules.dmc.repository import (
+    AuditEventsRepository,
+    DmcAgentsRepository,
+    DmcConversationMessagesRepository,
+    DmcConversationsRepository,
+    DmcNotificationBatchesRepository,
+    DmcPortfolioRepository,
+)
+from src.modules.maturity_diagnostics.repository import MaturityDiagnosticsRepository
 from src.modules.notifications.repository import (
     NotificationCampaignsRepository,
     NotificationGroupsRepository,
@@ -67,6 +76,13 @@ async def _main() -> None:
         await VisualSignatureEventsRepository(mongo.db).ensure_indexes()
         await BillingRepository(mongo.db).ensure_indexes()
         await PlatformSettingsRepository(mongo.db).ensure_indexes()
+        await DmcAgentsRepository(mongo.db).ensure_indexes()
+        await DmcPortfolioRepository(mongo.db).ensure_indexes()
+        await DmcConversationsRepository(mongo.db).ensure_indexes()
+        await DmcConversationMessagesRepository(mongo.db).ensure_indexes()
+        await DmcNotificationBatchesRepository(mongo.db).ensure_indexes()
+        await AuditEventsRepository(mongo.db).ensure_indexes()
+        await MaturityDiagnosticsRepository(mongo.db).ensure_indexes()
         logger.info("indexes_done")
     finally:
         await mongo.close()

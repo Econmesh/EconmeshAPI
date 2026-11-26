@@ -18,6 +18,11 @@ class ForoFillMode(StrEnum):
     COMPANY = "company"
 
 
+class DmcAssignmentMode(StrEnum):
+    MANUAL = "manual"
+    ROUND_ROBIN = "round_robin"
+
+
 class PlatformSettingsDocument(DomainDocument):
     collection_name: ClassVar[str] = "platform_settings"
 
@@ -26,6 +31,12 @@ class PlatformSettingsDocument(DomainDocument):
     foro_fill_mode: ForoFillMode = ForoFillMode.COMPANY
     foro_city: str | None = None
     foro_state: str | None = None
+    dmc_assignment_mode: DmcAssignmentMode = DmcAssignmentMode.MANUAL
 
 
-__all__ = ["ForoFillMode", "PLATFORM_SETTINGS_ID", "PlatformSettingsDocument"]
+__all__ = [
+    "DmcAssignmentMode",
+    "ForoFillMode",
+    "PLATFORM_SETTINGS_ID",
+    "PlatformSettingsDocument",
+]

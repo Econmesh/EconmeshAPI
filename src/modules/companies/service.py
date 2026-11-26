@@ -17,6 +17,7 @@ from src.modules.companies.model import (
     CompanyAddress,
     CompanyDocument,
     ComplianceDocumentStatus,
+    is_pre_registered,
 )
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.companies.schema import (
@@ -27,6 +28,9 @@ from src.modules.companies.schema import (
     CompanyUpdate,
     LogoPresignRequest,
     LogoPresignResponse,
+    PreRegistrationMatch,
+    PreRegistrationMatchList,
+    PreRegistrationPrefill,
 )
 from src.shared.schemas.responses import StorageUploadResponse
 from src.shared.utils.image_upload import extension_from_filename, upload_image_file
@@ -46,6 +50,18 @@ _ALLOWED_LOGO_TYPES = {
     "image/gif",
     "image/svg+xml",
 }
+
+# Minimum query size for the public pre-registration lookup (anti-enumeration).
+PRE_REGISTRATION_MIN_QUERY = 3
+PRE_REGISTRATION_MAX_RESULTS = 8
+
+
+def mask_tax_id(tax_id: str) -> str:
+    """``12345678000190`` → ``12.345.***/****-90`` (CNPJ) — keeps it recognisable."""
+    digits = "".join(ch for ch in tax_id if ch.isdigit())
+    if len(digits) != 14:
+        return f"{digits[:2]}***{digits[-2:]}" if len(digits) > 4 else "***"
+    return f"{digits[:2]}.{digits[2:5]}.***/****-{digits[12:]}"
 
 
 class CompaniesService:
@@ -91,6 +107,7 @@ class CompaniesService:
         return CompanyResponse(
             id=doc.id,
             owner_user_id=doc.owner_user_id,
+            registration_status=doc.registration_status,
             legal_name=doc.legal_name,
             trade_name=doc.trade_name,
             tax_id=doc.tax_id,
@@ -130,6 +147,51 @@ class CompaniesService:
         await self._ensure_owner(doc, owner_user_id)
         return self._to_response(doc)
 
+    # ------------------------------------------------------ pre-registration
+    async def search_pre_registrations(self, q: str) -> PreRegistrationMatchList:
+        """Public lookup used by the signup form (razão social / nome fantasia / CNPJ)."""
+        term = q.strip()
+        compact = "".join(ch for ch in term if ch not in " ./-")
+        if len(term) < PRE_REGISTRATION_MIN_QUERY or (compact.isdigit() and len(compact) < 5):
+            return PreRegistrationMatchList(items=[])
+        docs = await self._repo.search_pre_registrations(
+            term, limit=PRE_REGISTRATION_MAX_RESULTS
+        )
+        return PreRegistrationMatchList(
+            items=[
+                PreRegistrationMatch(
+                    id=doc.id,
+                    legal_name=doc.legal_name,
+                    trade_name=doc.trade_name,
+                    tax_id_masked=mask_tax_id(doc.tax_id),
+                    city=doc.address.city if doc.address else None,
+                    state=doc.address.state if doc.address else None,
+                )
+                for doc in docs
+                if doc.owner_user_id is None
+            ]
+        )
+
+    async def get_pre_registration_prefill(self, company_id: UUID) -> PreRegistrationPrefill:
+        doc = await self._repo.get_pre_registration(company_id)
+        if doc is None or not is_pre_registered(doc):
+            raise NotFoundError("Pre-registration not found.", code="pre_registration_not_found")
+        address = (
+            CompanyAddressResponse.model_validate(doc.address.model_dump())
+            if doc.address is not None
+            else None
+        )
+        return PreRegistrationPrefill(
+            id=doc.id,
+            legal_name=doc.legal_name,
+            trade_name=doc.trade_name,
+            tax_id=doc.tax_id,
+            email=doc.email,
+            phone=doc.phone,
+            address=address,
+            country=doc.country,
+        )
+
     async def create(
         self, payload: CompanyCreate, *, firebase_uid: str
     ) -> CompanyResponse:
@@ -140,7 +202,7 @@ class CompaniesService:
                 code="owner_already_has_company",
             )
         existing = await self._repo.get_by_tax_id(payload.country, payload.tax_id)
-        if existing is not None and existing.is_active:
+        if existing is not None and existing.is_active and not is_pre_registered(existing):
             raise ConflictError(
                 "A company with this tax ID already exists.",
                 code="tax_id_exists",
@@ -149,6 +211,36 @@ class CompaniesService:
         address = None
         if payload.address is not None:
             address = CompanyAddress.model_validate(payload.address.model_dump())
+
+        if existing is not None and is_pre_registered(existing):
+            # Responsável concluindo um pré-cadastro feito pelo agente DMC.
+            claim_patch: dict[str, object] = {
+                "owner_user_id": owner_user_id,
+                "legal_name": payload.legal_name,
+                "trade_name": payload.trade_name,
+                "email": payload.email,
+                "phone": payload.phone,
+                "legal_representative": payload.legal_representative
+                or existing.legal_representative,
+                "address": address.model_dump() if address is not None else None,
+                "website": payload.website or existing.website,
+                "description": payload.description or existing.description,
+                "logo_storage_key": payload.logo_storage_key,
+                "logo_url": payload.logo_url,
+                "sector": payload.sector or existing.sector,
+            }
+            claimed = await self._repo.claim_pre_registration(existing.id, claim_patch)
+            if claimed is None:
+                raise ConflictError(
+                    "A company with this tax ID already exists.",
+                    code="tax_id_exists",
+                )
+            logger.info(
+                "company_pre_registration_claimed",
+                company_id=str(claimed.id),
+                owner_user_id=str(owner_user_id),
+            )
+            return self._to_response(claimed)
 
         doc = CompanyDocument(
             owner_user_id=owner_user_id,
@@ -258,6 +350,8 @@ class CompaniesService:
                 raise ForbiddenError("You do not have access to this company.")
             owner_user_id = await self._resolve_user_id(firebase_uid)
             await self._ensure_owner(doc, owner_user_id)
+        if doc.owner_user_id is None:
+            raise ForbiddenError("This company has no owner yet.")
         uploaded = await upload_compliance_file(file, owner_user_id=doc.owner_user_id)
         if as_admin and mark_approved:
             uploaded = uploaded.model_copy(

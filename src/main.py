@@ -39,10 +39,14 @@ from src.modules.blog import router as blog_router
 from src.modules.coming_soon import router as coming_soon_router
 from src.modules.circularity import router as circularity_router
 from src.modules.companies import router as companies_router
+from src.modules.maturity_diagnostics.routes import router as maturity_diagnostics_router
 from src.modules.conversations import router as conversations_router
 from src.modules.contract_proposals.routes import router as contract_proposals_router
 from src.modules.contract_sections.routes import router as contract_sections_router
 from src.modules.dashboard import router as dashboard_router
+from src.modules.dmc import admin_router as dmc_admin_router
+from src.modules.dmc import router as dmc_router
+from src.modules.dmc import user_router as dmc_user_router
 from src.modules.files import router as files_router
 from src.modules.opportunities import router as opportunities_router
 from src.modules.notifications import router as notifications_router
@@ -163,6 +167,10 @@ def _register_routers(app: FastAPI, settings: Settings) -> None:
     api_v1 = APIRouter(prefix=settings.API_V1_PREFIX)
     api_v1.include_router(auth_router)
     api_v1.include_router(admin_router)
+    api_v1.include_router(dmc_router)
+    api_v1.include_router(dmc_admin_router)
+    api_v1.include_router(dmc_user_router)
+    api_v1.include_router(maturity_diagnostics_router)
     api_v1.include_router(dashboard_router)
     api_v1.include_router(blog_router)
     api_v1.include_router(coming_soon_router)

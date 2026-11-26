@@ -26,10 +26,10 @@ from src.modules.auth.schema import (
     RegisterResponse,
     TokenIntrospectionResponse,
 )
-from src.modules.companies.model import CompanyAddress, CompanyDocument
+from src.modules.companies.model import CompanyAddress, CompanyDocument, is_pre_registered
 from src.modules.companies.repository import CompaniesRepository
 from src.modules.users.repository import UsersRepository
-from src.shared.constants.roles import DEFAULT_ROLE, Role
+from src.shared.constants.roles import DEFAULT_ROLE, PANEL_ROLES, Role
 from src.shared.schemas.responses import MessageResponse
 from src.shared.utils.compliance_upload import upload_compliance_file
 from src.shared.utils.time import utcnow
@@ -338,9 +338,9 @@ class AuthService:
         )
 
     async def admin_login_with_id_token(self, id_token: str) -> LoginResponse:
-        """Admin-panel login — same as public login but requires ``role=admin``."""
+        """Panel login — administrators and DMC agents."""
         response = await self.login_with_id_token(id_token)
-        if response.user.role != Role.ADMIN:
+        if response.user.role not in PANEL_ROLES:
             raise ForbiddenError("Admin access required.", code="admin_required")
         return response
 
@@ -372,7 +372,7 @@ class AuthService:
     async def _assert_tax_id_available(self, company: RegisterCompanyInput) -> None:
         repo = self._require_companies()
         existing = await repo.get_by_tax_id(company.country, company.tax_id)
-        if existing is not None and existing.is_active:
+        if existing is not None and existing.is_active and not is_pre_registered(existing):
             raise ConflictError(
                 "A company with this tax ID already exists.",
                 code="tax_id_exists",
@@ -403,6 +403,44 @@ class AuthService:
                 owner_user_id=user.id,
                 firebase_client=self._firebase,
             )
+        pre_registered = await companies.get_by_tax_id(company.country, company.tax_id)
+        if pre_registered is not None and is_pre_registered(pre_registered):
+            # Responsável concluindo um pré-cadastro feito pelo agente DMC:
+            # reaproveita o mesmo documento (mantém id e vínculo com a carteira DMC).
+            created = await companies.claim_pre_registration(
+                pre_registered.id,
+                {
+                    "owner_user_id": user.id,
+                    "legal_name": company.legal_name,
+                    "trade_name": company.trade_name,
+                    "email": str(company.email),
+                    "phone": company.phone,
+                    "address": address.model_dump(),
+                    "legal_representative": user.name,
+                    "operating_license": (
+                        license_file.model_dump() if license_file is not None else None
+                    ),
+                    "mtr_document": mtr_file.model_dump() if mtr_file is not None else None,
+                },
+            )
+            if created is None:
+                raise ConflictError(
+                    "A company with this tax ID already exists.",
+                    code="tax_id_exists",
+                )
+            try:
+                await users.upsert_for_user(user.id, {"company_id": created.id})
+            except Exception:
+                await companies.restore(pre_registered)
+                raise
+            logger.info(
+                "company_pre_registration_claimed",
+                company_id=str(created.id),
+                user_id=str(user.id),
+            )
+            await self._enqueue_document_review(created)
+            return
+
         doc = CompanyDocument(
             owner_user_id=user.id,
             legal_name=company.legal_name,

@@ -51,6 +51,7 @@ class AdminService:
         users_service: UsersService,
         verification_repository: EmailVerificationRepository | None = None,
         compliance_review: ComplianceReviewService | None = None,
+        dmc_admin: object | None = None,
     ) -> None:
         self._auth_repo = auth_repository
         self._auth_service = auth_service
@@ -61,6 +62,7 @@ class AdminService:
         self._users_service = users_service
         self._verification_repo = verification_repository
         self._compliance_review = compliance_review
+        self._dmc_admin = dmc_admin
 
     @staticmethod
     def _user_to_list_item(user: UserDocument) -> AdminUserListItem:
@@ -126,13 +128,32 @@ class AdminService:
             raise NotFoundError("User not found.", code="user_not_found")
         return self._user_to_list_item(user)
 
-    async def create_user(self, payload: AdminRegisterRequest) -> RegisterResponse:
-        return await self._auth_service.register_by_admin(payload)
+    async def create_user(
+        self, payload: AdminRegisterRequest, *, actor_firebase_uid: str | None = None
+    ) -> RegisterResponse:
+        result = await self._auth_service.register_by_admin(payload)
+        user = await self._auth_repo.get_by_id(result.user.id)
+        if user is not None:
+            await self._sync_dmc_agent(
+                user,
+                actor_firebase_uid=actor_firebase_uid,
+                previous_role=None,
+                previous_active=None,
+            )
+        return result
 
-    async def update_user(self, user_id: UUID, payload: AdminUserUpdate) -> MeResponse:
+    async def update_user(
+        self,
+        user_id: UUID,
+        payload: AdminUserUpdate,
+        *,
+        actor_firebase_uid: str | None = None,
+    ) -> MeResponse:
         user = await self._auth_repo.get_by_id(user_id)
         if user is None:
             raise NotFoundError("User not found.", code="user_not_found")
+        previous_role = user.role
+        previous_active = user.is_active
 
         patch = payload.model_dump(exclude_unset=True)
         role = patch.pop("role", None)
@@ -161,7 +182,34 @@ class AdminService:
             if user is None:
                 raise NotFoundError("User not found.", code="user_not_found")
 
+        await self._sync_dmc_agent(
+            user,
+            actor_firebase_uid=actor_firebase_uid,
+            previous_role=previous_role,
+            previous_active=previous_active,
+        )
         return self._user_to_me(user)
+
+    async def _sync_dmc_agent(
+        self,
+        user: UserDocument,
+        *,
+        actor_firebase_uid: str | None,
+        previous_role: Role | None,
+        previous_active: bool | None,
+    ) -> None:
+        if self._dmc_admin is None:
+            return
+        actor_id = None
+        if actor_firebase_uid:
+            actor = await self._auth_repo.get_by_firebase_uid(actor_firebase_uid)
+            actor_id = actor.id if actor is not None else None
+        await self._dmc_admin.ensure_profile(  # type: ignore[attr-defined]
+            user,
+            actor_user_id=actor_id,
+            previous_role=previous_role,
+            previous_active=previous_active,
+        )
 
     async def get_user_profile(self, user_id: UUID) -> UserProfileResponse:
         return await self._users_service.get_profile_by_id(user_id)
